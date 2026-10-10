@@ -10,18 +10,132 @@ import {
   type Query,
   type OccurrenceQuery,
   type State,
+  type PhraseFilters,
+  type PhraseFilterField,
+  type DetailSort,
 } from "./model";
-import { view } from "./view";
+import { view, presentationControls } from "./view";
+import {
+  readReaderHighlights,
+  saveReaderHighlights,
+  highlightStatus,
+  readerChapterMarkup,
+} from "./reader-highlights";
 import { syncOptionalControls } from "./filter-controls";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-let state = initialState;
+let state: State = {
+  ...initialState,
+  readerHighlightOptions: readReaderHighlights(),
+};
 let request = 0;
 let countRequest = 0;
 
-const dispatch = (action: Action) => {
+const dispatch = (action: Action, preservePosition = false) => {
+  const main = root.querySelector<HTMLElement>("main");
+  const position =
+    preservePosition && main
+      ? { top: main.scrollTop, left: main.scrollLeft }
+      : null;
+  const focused = preservePosition
+    ? (document.activeElement as HTMLElement | null)
+    : null;
+  const sortFocus = focused?.dataset.sortOwner
+    ? { owner: focused.dataset.sortOwner, field: focused.dataset.sortField }
+    : null;
   state = reduce(state, action);
   root.innerHTML = view(state);
+  if (position) {
+    const updated = root.querySelector<HTMLElement>("main");
+    if (updated) {
+      updated.scrollTop = position.top;
+      updated.scrollLeft = position.left;
+    }
+  }
+  if (sortFocus) {
+    [...root.querySelectorAll<HTMLButtonElement>("[data-sort-owner]")]
+      .find(
+        (button) =>
+          button.dataset.sortOwner === sortFocus.owner &&
+          button.dataset.sortField === sortFocus.field,
+      )
+      ?.focus({ preventScroll: true });
+  }
+};
+// Adjust presentation in place so unsent filters and scroll position survive.
+const adjustPresentation = (action: Action) => {
+  state = reduce(state, action);
+  const layout = root.querySelector<HTMLElement>(".layout");
+  layout?.style.setProperty("--scripture-size", `${state.size}px`);
+  layout?.style.setProperty("--presentation-width", `${state.width}px`);
+  const controls = root.querySelector(".presentation-controls");
+  if (controls) controls.innerHTML = presentationControls(state);
+};
+const readPhraseFilters = (): PhraseFilters =>
+  Object.fromEntries(
+    (["words", "letters", "occurrences", "books"] as const).map((field) => {
+      const input = root.querySelector<HTMLInputElement>(
+        `#phrase-${field}-filter`,
+      );
+      return [
+        field,
+        input?.value && Number.isFinite(input.valueAsNumber)
+          ? input.valueAsNumber
+          : null,
+      ];
+    }),
+  ) as PhraseFilters;
+const refreshHighlightStatus = () => {
+  const status = root.querySelector("#highlight-save-status");
+  if (status) {
+    status.textContent = highlightStatus(state.highlightSaveStatus);
+    status.setAttribute(
+      "role",
+      state.highlightSaveStatus === "error" ? "alert" : "status",
+    );
+  }
+};
+const updateReaderHighlights = () => {
+  const form = root.querySelector<HTMLFormElement>("#reader-highlights-form");
+  if (!form) return;
+  const data = new FormData(form);
+  const old = state.readerHighlightOptions;
+  const rule = (key: "exclusive" | "firstMention" | "occurrences") => ({
+    enabled: data.has(key),
+    color: String(data.get(`${key}Color`) ?? old[key].color),
+  });
+  const rawCount =
+    root.querySelector<HTMLInputElement>("#highlight-count")?.valueAsNumber;
+  const count =
+    rawCount && Number.isSafeInteger(rawCount) && rawCount > 0
+      ? rawCount
+      : old.occurrences.count;
+  state = reduce(state, {
+    type: "reader-highlight-options",
+    options: {
+      exclusive: rule("exclusive"),
+      firstMention: rule("firstMention"),
+      occurrences: { ...rule("occurrences"), count },
+    },
+  });
+  const countInput = root.querySelector<HTMLInputElement>("#highlight-count");
+  if (countInput)
+    countInput.disabled = !state.readerHighlightOptions.occurrences.enabled;
+  const chapter = root.querySelector(".chapter-text");
+  if (chapter) chapter.innerHTML = readerChapterMarkup(state);
+  refreshHighlightStatus();
+};
+const toggleHighlightOptions = () => {
+  const open = !state.highlightPanelOpen;
+  state = reduce(state, { type: "reader-highlight-panel", open });
+  const panel = root.querySelector("#reader-highlight-panel");
+  panel?.classList.toggle("is-open", open);
+  panel?.setAttribute("aria-hidden", String(!open));
+  panel?.toggleAttribute("inert", !open);
+  const toggle = root.querySelector("#highlight-options-toggle");
+  toggle?.setAttribute("aria-expanded", String(open));
+  const arrow = toggle?.querySelector("span");
+  if (arrow) arrow.textContent = open ? "⌃" : "⌄";
 };
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -30,15 +144,17 @@ const message = (error: unknown) =>
 const load = async <T>(
   effect: () => Promise<T>,
   action: (value: T) => Action,
+  preservePosition = false,
 ): Promise<boolean> => {
   const token = ++request;
   try {
     const value = await effect();
     if (token !== request) return false;
-    dispatch(action(value));
+    dispatch(action(value), preservePosition);
     return true;
   } catch (error) {
-    if (token === request) dispatch({ type: "error", error: message(error) });
+    if (token === request)
+      dispatch({ type: "error", error: message(error) }, preservePosition);
     return false;
   }
 };
@@ -46,8 +162,14 @@ const load = async <T>(
 const navigate = async (location: Location) => {
   dispatch({ type: "navigate", location });
   const loaded = await load(
-    () => api.chapter(location),
-    (verses) => ({ type: "chapter", verses }),
+    async () => {
+      const [verses, highlights] = await Promise.all([
+        api.chapter(location),
+        api.readerHighlights(location),
+      ]);
+      return { verses, highlights };
+    },
+    ({ verses, highlights }) => ({ type: "chapter", verses, highlights }),
   );
   if (!loaded) return;
   const main = root.querySelector("main");
@@ -122,6 +244,75 @@ const statistics = async (book: string) => {
   if (loaded) void phraseCounts(book, token);
 };
 
+const wordList = async (
+  text = state.wordText,
+  offset = state.wordOffset,
+  books = state.wordBooks,
+  count = state.wordCount,
+) => {
+  dispatch({ type: "word-query", text, offset, books, count });
+  const loaded = await load(
+    () => api.wordList(text, offset, books, count),
+    (results) => ({ type: "word-results", results }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const savedPhrases = async (
+  offset = state.savedPhraseOffset,
+  filters = state.phraseFilters,
+) => {
+  dispatch({ type: "saved-phrase-query", offset, filters });
+  const loaded = await load(
+    () => api.savedPhrases(offset, filters),
+    (results) => ({ type: "saved-phrases", results }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const phraseDetails = async (phrase: string, offset = 0) => {
+  dispatch({ type: "phrase-select", phrase, offset });
+  const loaded = await load(
+    () => api.phraseDetails(phrase, offset),
+    (detail) => ({ type: "phrase-detail", detail }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const verseList = async (
+  book = state.verseBook,
+  offset = state.verseOffset,
+) => {
+  dispatch({ type: "verse-query", book, offset });
+  const loaded = await load(
+    () => api.verseList(book, offset),
+    (results) => ({ type: "verse-results", results }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const verseDetails = async (
+  location: Location,
+  offset = 0,
+  sort = state.versePhraseSort,
+  preservePosition = false,
+) => {
+  // Keep the current lists in place while sorted rows are being read.
+  if (preservePosition) dispatch({ type: "verse-sort", sort }, true);
+  else dispatch({ type: "verse-select", location, offset, sort });
+  const loaded = await load(
+    () => api.verseDetails(location, offset, sort),
+    (detail) => ({ type: "verse-detail", detail }),
+    preservePosition,
+  );
+  if (loaded && !preservePosition)
+    root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const wordDetails = async (word: string) => {
+  dispatch({ type: "word-select", word });
+  const loaded = await load(
+    () => api.wordDetails(word),
+    (detail) => ({ type: "word-detail", detail }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+
 const occurrences = async (query: OccurrenceQuery) => {
   dispatch({ type: "occurrence-query", query });
   const loaded = await load(
@@ -137,14 +328,102 @@ root.addEventListener("click", (event) => {
     "button",
   );
   if (!button || button.disabled) return;
+  if (button.dataset.action === "highlight-options-toggle") {
+    toggleHighlightOptions();
+    return;
+  }
   if (button.dataset.page) {
     dispatch({
       type: "page",
       page: button.dataset.page as State["page"],
     });
+    if (state.page === "verses") void verseList();
+    if (state.page === "phrases") void savedPhrases();
+    if (state.page === "words") void wordList();
     if (state.page === "books") void statistics(state.statisticsBook);
     if (state.page === "search")
       root.querySelector<HTMLInputElement>("#query")?.focus();
+    return;
+  }
+  if (button.dataset.sortOwner) {
+    const owner = button.dataset.sortOwner;
+    const previous =
+      owner === "verse-phrases"
+        ? state.versePhraseSort
+        : owner === "verse-words"
+          ? state.verseWordSort
+          : owner === "phrase-words"
+            ? state.phraseWordSort
+            : state.subphraseSort;
+    const field = button.dataset.sortField as DetailSort["field"];
+    const sort: DetailSort = {
+      field,
+      direction:
+        previous.field === field && previous.direction === "asc"
+          ? "desc"
+          : "asc",
+    };
+    if (owner === "verse-phrases" && state.selectedVerse)
+      void verseDetails(state.selectedVerse, 0, sort, true);
+    if (owner === "verse-words")
+      dispatch({ type: "verse-word-sort", sort }, true);
+    if (owner === "phrase-words")
+      dispatch({ type: "phrase-word-sort", sort }, true);
+    if (owner === "subphrases")
+      dispatch({ type: "subphrase-sort", sort }, true);
+    return;
+  }
+  if (button.dataset.verseDetail) {
+    void verseDetails({
+      book: button.dataset.book!,
+      chapter: Number(button.dataset.chapter),
+      verse: Number(button.dataset.verse),
+    });
+    return;
+  }
+  if (button.dataset.savedPhrase) {
+    void phraseDetails(
+      button.dataset.phraseLabel ?? button.dataset.savedPhrase,
+    );
+    return;
+  }
+  if (button.dataset.phraseFilter) {
+    dispatch({
+      type: "phrase-filter",
+      filter: button.dataset.phraseFilter as PhraseFilterField,
+      filters: readPhraseFilters(),
+    });
+    root
+      .querySelector<HTMLInputElement>(
+        `#phrase-${button.dataset.phraseFilter}-filter`,
+      )
+      ?.focus();
+    return;
+  }
+  if (button.dataset.wordFilter) {
+    const text =
+      root.querySelector<HTMLInputElement>("#word-filter")?.value ??
+      state.wordText;
+    dispatch({
+      type: "word-filter",
+      books:
+        root.querySelector<HTMLInputElement>("#word-books-filter")
+          ?.valueAsNumber || null,
+      count:
+        root.querySelector<HTMLInputElement>("#word-count-filter")
+          ?.valueAsNumber || null,
+      filter: button.dataset.wordFilter as "books" | "count",
+      text,
+    });
+    root
+      .querySelector<HTMLInputElement>(
+        `#word-${button.dataset.wordFilter}-filter`,
+      )
+      ?.focus();
+    return;
+  }
+  if (button.dataset.word) {
+    void wordDetails(button.dataset.word);
     return;
   }
   if (button.dataset.statisticsChapter) {
@@ -184,6 +463,77 @@ root.addEventListener("click", (event) => {
     return;
   }
   switch (button.dataset.action) {
+    case "saved-phrases-previous":
+      void savedPhrases(Math.max(0, state.savedPhraseOffset - pageSize));
+      break;
+    case "saved-phrases-next":
+      void savedPhrases(state.savedPhraseOffset + pageSize);
+      break;
+    case "verses-previous":
+      void verseList(
+        state.verseBook,
+        Math.max(0, state.verseOffset - pageSize),
+      );
+      break;
+    case "verses-next":
+      void verseList(state.verseBook, state.verseOffset + pageSize);
+      break;
+    case "subphrases-previous":
+      dispatch({
+        type: "subphrase-offset",
+        offset: Math.max(0, state.subphraseOffset - pageSize),
+      });
+      break;
+    case "subphrases-next":
+      dispatch({
+        type: "subphrase-offset",
+        offset: state.subphraseOffset + pageSize,
+      });
+      break;
+    case "verse-phrases-previous":
+      if (state.selectedVerse)
+        void verseDetails(
+          state.selectedVerse,
+          Math.max(0, state.versePhraseOffset - pageSize),
+        );
+      break;
+    case "verse-phrases-next":
+      if (state.selectedVerse)
+        void verseDetails(
+          state.selectedVerse,
+          state.versePhraseOffset + pageSize,
+        );
+      break;
+    case "verse-reader":
+      if (state.selectedVerse) void navigate(state.selectedVerse);
+      break;
+    case "phrase-verses-previous":
+      void phraseDetails(
+        state.selectedPhrase,
+        Math.max(0, state.phraseVerseOffset - pageSize),
+      );
+      break;
+    case "phrase-verses-next":
+      void phraseDetails(
+        state.selectedPhrase,
+        state.phraseVerseOffset + pageSize,
+      );
+      break;
+    case "words-previous":
+      void wordList(state.wordText, Math.max(0, state.wordOffset - pageSize));
+      break;
+    case "words-next":
+      void wordList(state.wordText, state.wordOffset + pageSize);
+      break;
+    case "word-verses":
+      dispatch({ type: "page", page: "search" });
+      void search({
+        text: state.selectedWord,
+        book: button.dataset.wordBook ?? null,
+        phrase: false,
+        offset: 0,
+      });
+      break;
     case "phrase-counts-retry":
       void phraseCounts(state.statisticsBook, ++countRequest);
       break;
@@ -228,10 +578,16 @@ root.addEventListener("click", (event) => {
       break;
     }
     case "smaller":
-      dispatch({ type: "size", size: state.size - 2 });
+      adjustPresentation({ type: "size", size: state.size - 2 });
       break;
     case "larger":
-      dispatch({ type: "size", size: state.size + 2 });
+      adjustPresentation({ type: "size", size: state.size + 2 });
+      break;
+    case "narrower":
+      adjustPresentation({ type: "width", width: state.width - 200 });
+      break;
+    case "wider":
+      adjustPresentation({ type: "width", width: state.width + 200 });
       break;
     case "search-previous":
       void search({
@@ -243,7 +599,17 @@ root.addEventListener("click", (event) => {
       void search({ ...state.query, offset: state.query.offset + pageSize });
       break;
     case "retry":
-      if (state.page === "occurrences") void occurrences(state.occurrenceQuery);
+      if (state.page === "verses") void verseList();
+      if (state.page === "verse-detail" && state.selectedVerse)
+        void verseDetails(state.selectedVerse, state.versePhraseOffset);
+      if (state.page === "phrases") void savedPhrases();
+      else if (state.page === "phrase-detail")
+        void phraseDetails(state.selectedPhrase, state.phraseVerseOffset);
+      else if (state.page === "words") void wordList();
+      else if (state.page === "word-detail")
+        void wordDetails(state.selectedWord);
+      else if (state.page === "occurrences")
+        void occurrences(state.occurrenceQuery);
       else if (state.page === "book-phrases")
         void exclusivePhrases(state.phraseLength, state.phraseOffset);
       else if (state.page === "books") void statistics(state.statisticsBook);
@@ -264,8 +630,25 @@ root.addEventListener("click", (event) => {
   }
 });
 
+root.addEventListener("input", (event) => {
+  const input = event.target as HTMLInputElement;
+  if (
+    input.closest("#reader-highlights-form") &&
+    (input.type === "number" || input.type === "color")
+  )
+    updateReaderHighlights();
+});
+
 root.addEventListener("change", (event) => {
   const control = event.target as HTMLSelectElement;
+  if (control.closest("#reader-highlights-form")) {
+    updateReaderHighlights();
+    return;
+  }
+  if (control.id === "verses-book") {
+    void verseList(control.value || null, 0);
+    return;
+  }
   if (
     (control.dataset.controls || control.id === "choose-books") &&
     control.form
@@ -281,6 +664,39 @@ root.addEventListener("change", (event) => {
 
 root.addEventListener("submit", (event) => {
   const form = event.target as HTMLFormElement;
+  if (form.id === "reader-highlights-form") {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    updateReaderHighlights();
+    state = reduce(state, {
+      type: "reader-highlight-saved",
+      status: saveReaderHighlights(state.readerHighlightOptions)
+        ? "saved"
+        : "error",
+    });
+    refreshHighlightStatus();
+    return;
+  }
+  if (form.id === "phrases-form") {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    void savedPhrases(0, readPhraseFilters());
+    return;
+  }
+  if (form.id === "words-form") {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
+    const number = (name: string) =>
+      data.get(name) ? Number(data.get(name)) : null;
+    void wordList(
+      String(data.get("wordText") ?? "").trim(),
+      0,
+      number("wordBooks"),
+      number("wordCount"),
+    );
+    return;
+  }
   if (form.id === "occurrence-form") {
     event.preventDefault();
     syncOptionalControls(form);
@@ -340,6 +756,7 @@ root.addEventListener("submit", (event) => {
     text,
     book: String(data.get("book") ?? "") || null,
     phrase: data.has("phrase"),
+    partial: data.has("partial"),
     offset: 0,
   });
 });

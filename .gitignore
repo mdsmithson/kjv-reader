@@ -3,3 +3,6 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 *.log
+
+# Generated once by prepare:data and included in installers, not source control.
+src-tauri/data/precomputed/

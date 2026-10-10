@@ -41,10 +41,10 @@ const entryMarkup = (
 
 const results = (state: State) => {
   if (state.busy)
-    return '<p class="notice" role="status">Building or loading saved occurrence data…<br>You can continue reading while this runs.</p>';
+    return '<p class="notice" role="status">Reading occurrence data…<br>You can continue reading while this runs.</p>';
   const page = state.occurrences;
   if (!page)
-    return '<div class="search-empty"><span aria-hidden="true">✦</span><h2>Find patterns in the Scriptures.</h2><p>Choose a frequency and phrase length.<br>The first request saves the data; later requests reuse it.</p></div>';
+    return '<div class="search-empty"><span aria-hidden="true">✦</span><h2>Find patterns in the Scriptures.</h2><p>Choose a frequency and phrase length.<br>Whole-Bible data is prepared in advance. Custom book selections are saved for reuse.</p></div>';
   const status = page.builtLengths.length
     ? `Built and saved data for ${page.builtLengths.join(", ")} word lengths.`
     : page.builtFilters

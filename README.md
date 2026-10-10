@@ -315,3 +315,174 @@ Indexes remain available after restarting, and opening another book reuses them.
 The release example `exclusive_benchmark` measures the actual corpus. This
 machine built all 32 indexes in approximately 4.5 seconds and read a saved page
 in under 1 millisecond; timings depend on hardware and disk.
+
+## Whole-word search and the Words catalogue
+
+Search matches complete words by default, ignoring case and punctuation. Internal
+apostrophes remain part of a word: `god` does not match `godhead` or `god's`.
+Enable **Partial match** for substring searches. **Exact phrase** requires words
+in order; whole-word phrases ignore punctuation between words, while partial
+phrase searches match the literal text.
+
+**Words** lists all distinct words alphabetically, with total appearances and the
+number of books containing each word. Filter by all or part of a word; the list
+shows 50 entries per page. Opening a word shows its total count, letter count,
+first-mentioned verse, and every containing book in Bible order, with per-book
+appearance counts. Letters exclude punctuation, apostrophes, and digits. The first
+mention opens in the reader; book links open whole-word searches scoped to that
+book. The catalogue is built once from the bundled Bible and is available offline.
+
+Click the **Books** or **Appearances** header on Words to reveal an exact-count
+filter. Enter **66** under Books and submit to list words present in all 66 books.
+Both count filters can be combined with the text filter; clear a numeric field
+to remove its restriction. Filters remain active while paging or returning from
+a word detail page.
+
+## Prebuilt offline data
+
+The release app ships **9,632,649 distinct phrases**, covering every supported
+length from **2 through 32 words**. Word counts, letter counts, total occurrences,
+book counts, alphabetical order, filter indexes, and all matching verse locations
+are prepared before packaging. Opening a phrase page does not scan the Bible,
+recount phrases, sort the catalogue, create indexes, or copy the data pack.
+
+The pack also includes whole-Bible occurrence and book-exclusive indexes for
+**all 32 lengths**, plus word, book, and chapter statistics. Arbitrary selections
+of books and optional occurrence-filter result sets use the existing local cache;
+whole-Bible source counts and positional summaries are reused from bundled files.
+
+Run **`npm run prepare:data`** to generate the pack once. Preparation resumes
+completed phrase-length chunks and reuses complete analysis indexes. Unchanged
+packs and statistics are reused on subsequent runs. The installer build runs
+this preparation step automatically. The generated files live in
+`src-tauri/data/precomputed/`, are ignored by Git, and are bundled as resources.
+The desktop build rejects incomplete data, missing lengths, and data belonging
+to another corpus. A corpus or binary-format change requires new prepared data.
+
+The pack is approximately **1.99 GB before installer compression**. The compact
+catalogue stores one 32-byte record per phrase and references shared token data,
+rather than duplicating every phrase as text. Verse lists contain canonical verse
+IDs. Metadata groups store precomputed matching counts and alphabetical phrase
+IDs, so combined filters and later pages do not scan the corpus or full records.
+Only the small dictionary, token data, and filter IDs are loaded at startup;
+phrase records, verse postings, and analysis indexes remain on disk.
+
+Measured release-mode reads on the development machine:
+
+| Operation                                  |    Time |
+| ------------------------------------------ | ------: |
+| Open prepared phrase data                  |   61 ms |
+| First 50 phrases                           |  0.3 ms |
+| Page starting at phrase 1,000,000          |  0.3 ms |
+| Exact-count filter examples                | 1–19 ms |
+| Phrase detail and first 50 matching verses |    3 ms |
+
+These measure backend data reads, excluding UI rendering and installer extraction.
+
+## Phrases and presentation
+
+**Phrases** lists all phrases alphabetically, with words, letters, occurrences,
+and books. Click a header to enter an exact-count filter, then press Enter or
+**Filter phrases**. Filters combine, apply before pagination, and remain active
+when returning from a phrase page. Clear a field to remove its restriction.
+
+Opening a phrase shows the same counts and every matching verse in Bible order,
+50 per page. Verses link to the reader. Matches use complete consecutive words
+within one verse, ignoring case and punctuation. Letters exclude spaces,
+punctuation, and digits. Occurrences include repetitions and overlapping matches;
+the matching verse list includes each verse once.
+
+Every page has **Text size** and **Page width** controls. **A− / A+** resizes
+scripture text, and **↔− / ↔+** narrows or widens the presentation within the
+available window. Settings carry across sections and preserve unsubmitted
+filters and scroll position.
+
+## Verses
+
+**Verses** lists all **31,102 verses** in Bible order with word, letter, and
+phrase counts. Choose a book to narrow the list; paging returns 50 verses.
+Clicking a verse in the reader or catalogue opens its verse detail page.
+
+Each verse detail shows the original verse with clickable words linking to
+Word pages, the three counts, and its consecutive phrases of 2–32 words. Phrases appear alphabetically,
+50 per page, with whole-Bible occurrence
+and book counts; phrase links open their existing detail pages. Repeated phrases
+appear once. A phrase that occurs once is hidden when a longer containing phrase
+also occurs once; only the maximal containing phrase remains. Phrases with more
+than one occurrence stay visible. The distinct-phrase count still includes all
+phrases, and the list reports how many are shown. Labels preserve the verse’s
+original capitalization, punctuation, and spelling. Counts and links retain the
+existing case-insensitive normalized phrase identity. Word counts include repetitions. Letter counts exclude spaces,
+punctuation, and digits. **Read in chapter** returns to the verse in the reader.
+
+All counts, word boundaries, and alphabetical verse-to-phrase references are
+prepared once and included in the app. The additional four files are
+`verses.json`, `verse-words.bin`, `verse-phrases.bin`, and `verse-display.bin`,
+approximately 85 MB in total. They contain 790,406 word links and 10,959,094 distinct verse-to-phrase
+links, plus 1,801,735 rolled-up display links. Rollups and original-text display
+boundaries are prepared once for every verse, before pagination. Runtime requests
+read only the selected verse's saved word boundaries and
+at most 50 phrase references. Existing phrase metadata is reused directly; no
+verse tokenization, phrase enumeration, Bible scan, or sorting runs on navigation.
+Preparation skips unchanged verse data, and packaging checks its corpus,
+supported phrase lengths, directory size, and binary file sizes.
+
+## Detail-page word lists and sorting
+
+Verse detail pages have a **Words in this verse** list. Phrase detail pages have
+clickable words in their headings, a **Words in this phrase** list, and proper
+subphrases excluding the phrase itself. Each distinct normalized word appears
+once, with its original display spelling, whole-Bible occurrences, letter count,
+and number of containing books. Every word opens its Word page.
+
+Click **Phrase**, **Occurrences**, or **Books** to sort verse phrases or phrase
+subphrases. Click **Word**, **Occurrences**, **Letters**, or **Books** to sort
+word lists. Clicking the same header again reverses ascending/descending order;
+the arrow and accessible column status indicate the current order. Sorting
+applies to the complete list before paging. Ties follow alphabetical phrase or
+word order in the same direction. The existing once-occurring phrase rollups
+also apply among proper subphrases, and displayed labels retain punctuation
+and capitalization.
+
+The app ships `verse-order.bin`, containing both numeric sort orders for every
+verse's complete displayed phrase list, plus `phrase-children.bin` and its
+manifest. The latter stores two prefix/suffix references per phrase, a compact
+shared graph covering all 9,632,649 phrases. Proper subphrase lists follow saved
+references and read existing counts; they do not scan the Bible or count phrases.
+Their size is bounded by 32 words (at most 495 proper phrases). A bounded cache
+reuses the last 16 phrase content responses while matching-verse pages change.
+Word metadata comes from the saved Words catalogue, and the small word and
+subphrase lists sort locally. These indexes add approximately 91 MB and are
+prepared once, verified before packaging, and reused unchanged on later builds.
+
+## Reader highlight options
+
+**Read the Bible** has a visible **Highlight options** button above the chapter.
+It opens and closes a sliding drawer with three independent rules and a color
+picker for each:
+
+- **Exclusive words for chapter** highlights words found nowhere outside the
+  current chapter. The saved rule follows each chapter you open, using that
+  chapter's own exclusive words.
+- **First mention** highlights the first occurrence of each normalized word in
+  the Bible, including only the first appearance when it repeats in its first
+  verse.
+- **Words that show X times** highlights every whole word with exactly the
+  selected number of total appearances in the Bible.
+
+Edits preview immediately. **Save highlight options** stores the enabled rules,
+colors, and count in the app's local preferences, restores them after reopening,
+and applies them across chapters and books. Closing the drawer does not disable
+the rules. Words matching multiple rules show each color in horizontal stripes.
+Original capitalization, punctuation, and verse links are preserved. Dark colors
+use light lettering; mixed dark/light stripes add a text outline for legibility.
+The drawer respects reduced-motion preferences, and closed controls leave the
+keyboard tab order.
+
+Highlight eligibility reads existing prepared word boundaries, chapter-exclusive
+statistics, first-mention locations, and global word counts. Navigation requests
+chapter text and highlighting metadata together, with the existing stale-request
+protection. No whole-Bible scan, frequency recount, or new phrase index is needed.
+Saved preferences are validated before use; invalid colors and counts fall back
+to safe defaults. A failed preference write is reported in the drawer while the
+current session's highlights remain active.

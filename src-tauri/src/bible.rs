@@ -1,7 +1,7 @@
 //! Pure domain operations over an immutable, canonically ordered corpus.
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verse {
     pub book: String,
@@ -10,7 +10,7 @@ pub struct Verse {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Book {
     pub name: String,
     pub chapters: u16,
@@ -35,6 +35,8 @@ pub struct SearchQuery {
     pub text: String,
     pub book: Option<String>,
     pub phrase: bool,
+    #[serde(default)]
+    pub partial: bool,
     pub offset: usize,
     #[serde(default)]
     pub normalized_words: bool,
@@ -74,6 +76,7 @@ fn to_verse(indexed: &IndexedVerse) -> Verse {
 }
 
 impl Bible {
+    pub fn verse_at(&self, index: usize) -> Option<Verse> { self.verses.get(index).map(to_verse) }
     pub fn bundled() -> Result<Self, String> {
         Self::from_json(include_str!("../data/kjv.json"))
     }
@@ -150,6 +153,11 @@ impl Bible {
                 && query.included_books.as_ref().is_none_or(|books| books.contains(&indexed.verse.book))
                 && if query.normalized_words {
                     word_query != "  " && indexed.word_text.contains(&word_query)
+                } else if !query.partial {
+                    let words = crate::text::words(&query.text);
+                    !words.is_empty() && if query.phrase { indexed.word_text.contains(&word_query) } else {
+                        words.iter().all(|word| indexed.word_text.contains(&format!(" {word} ")))
+                    }
                 } else if query.phrase {
                     indexed.normalized.contains(&normalized)
                 } else {
@@ -172,11 +180,27 @@ impl Bible {
 mod tests {
     use super::*;
 
+    #[test]
+    fn whole_words_are_default_and_partial_matches_are_optional() {
+        let bible = Bible::from_json(r#"{"Genesis 1:1":"God, GOD's word.","Genesis 1:2":"godhead words","Genesis 1:3":"God; word!"}"#).unwrap();
+        let mut request = query("god");
+        assert_eq!(bible.search(&request).total, 2);
+        request.partial = true;
+        assert_eq!(bible.search(&request).total, 3);
+        request = query("god's");
+        assert_eq!(bible.search(&request).total, 1);
+        request = query("god word");
+        request.phrase = true;
+        assert_eq!(bible.search(&request).verses[0].number, 3);
+        assert_eq!(bible.search(&query("!!!")).total, 0);
+    }
+
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
             text: text.into(),
             book: None,
             phrase: false,
+            partial: false,
             offset: 0,
             normalized_words: false,
             included_books: None,

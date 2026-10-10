@@ -1,10 +1,12 @@
 //! Persistent n-gram counts and positional summaries, with cached filtered pages.
 pub mod exclusive;
+pub mod catalogue;
+pub mod prepared;
 use crate::spatial::{Position, Spatial};
 use crate::text::words;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -74,6 +76,7 @@ pub struct OccurrenceIndex {
     verses: Vec<TokenVerse>,
     fingerprint: [u8; 32],
     directory: PathBuf,
+    prebuilt_directory: Option<PathBuf>,
     build_lock: Mutex<()>,
     book_ids: HashMap<String, usize>,
     scopes: Mutex<HashMap<u128, std::sync::Arc<OccurrenceIndex>>>,
@@ -275,15 +278,27 @@ impl OccurrenceIndex {
             tokens: Arc::new(line.iter().map(|word| ids[word.as_str()]).collect()),
         }).collect();
         let directory = root.join(format!("occurrences-v{VERSION}-{}", hex(&fingerprint)));
-        Self { dictionary: Arc::new(dictionary), token_letters: Arc::new(token_letters), verses, fingerprint, directory, build_lock: Mutex::new(()), book_ids: book_ids.into_iter().map(|(name, id)| (name.to_owned(), id)).collect(), scopes: Mutex::new(HashMap::new()) }
+        Self { dictionary: Arc::new(dictionary), token_letters: Arc::new(token_letters), verses, fingerprint, directory, prebuilt_directory: None, build_lock: Mutex::new(()), book_ids: book_ids.into_iter().map(|(name, id)| (name.to_owned(), id)).collect(), scopes: Mutex::new(HashMap::new()) }
     }
 
+    pub fn with_prebuilt(mut self, root: &Path) -> Self {
+        self.prebuilt_directory = self.directory.file_name().map(|name| root.join(name));
+        self
+    }
+    fn read_file(&self, name: &str) -> io::Result<File> {
+        match File::open(self.directory.join(name)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if let Some(root) = &self.prebuilt_directory { File::open(root.join(name)) } else { Err(error) }
+            }
+            result => result,
+        }
+    }
     fn path(&self, length: u16) -> PathBuf {
         self.directory.join(format!("words-{length}.bin"))
     }
 
     fn open(&self, length: u16) -> io::Result<(File, u64)> {
-        let mut file = File::open(self.path(length))?;
+        let mut file = self.read_file(&format!("words-{length}.bin"))?;
         let mut magic = [0; 8];
         file.read_exact(&mut magic)?;
         let version = read_u32(&mut file)?;
@@ -386,6 +401,7 @@ impl OccurrenceIndex {
             }
         }
         let temporary = self.temporary("selection");
+        fs::create_dir_all(&self.directory)?;
         let mut writer = BufWriter::new(OpenOptions::new().create_new(true).write(true).open(&temporary)?);
         writer.write_all(SELECTION_MAGIC)?;
         writer.write_all(&(matching.len() as u64).to_le_bytes())?;
@@ -427,7 +443,7 @@ impl OccurrenceIndex {
                         dictionary: self.dictionary.clone(), token_letters: self.token_letters.clone(),
                         verses: self.verses.iter().filter(|verse| verse.position.book & mask != 0).cloned().collect(),
                         fingerprint, directory: self.directory.join(format!("books-{}", hex(&fingerprint))),
-                        build_lock: Mutex::new(()), book_ids: self.book_ids.clone(), scopes: Mutex::new(HashMap::new()),
+                        prebuilt_directory: None, build_lock: Mutex::new(()), book_ids: self.book_ids.clone(), scopes: Mutex::new(HashMap::new()),
                     })
                 }))
             };

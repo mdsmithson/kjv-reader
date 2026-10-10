@@ -51,3 +51,40 @@ pub async fn exclusive_phrases(book: String, length: u16, offset: usize, index: 
     tauri::async_runtime::spawn_blocking(move || index.exclusive_page(&book, length, offset))
         .await.map_err(|error| error.to_string())?
 }
+
+#[tauri::command]
+pub fn word_list(text: String, offset: usize, books: Option<usize>, count: Option<usize>, statistics: tauri::State<'_, crate::word_stats::WordStatistics>) -> crate::word_stats::WordPage {
+    statistics.list_filtered(&text, offset, books, count)
+}
+#[tauri::command]
+pub fn word_details(word: String, statistics: tauri::State<'_, crate::word_stats::WordStatistics>) -> Result<crate::word_stats::WordDetail, String> {
+    statistics.get(&word)
+}
+
+#[tauri::command]
+pub async fn saved_phrases(offset: usize, filters: Option<crate::occurrences::catalogue::PhraseFilters>, phrases: tauri::State<'_, Arc<crate::occurrences::prepared::PreparedPhrases>>) -> Result<crate::occurrences::catalogue::SavedPhrasePage, String> {
+    let phrases = Arc::clone(phrases.inner());
+    tauri::async_runtime::spawn_blocking(move || phrases.page(offset, &filters.unwrap_or_default())).await.map_err(|error| error.to_string())?
+}
+#[derive(serde::Serialize)]
+pub struct PhrasePage { #[serde(flatten)] details:crate::phrase_stats::PhraseDetail, #[serde(flatten)] contents:crate::occurrences::prepared::PhraseContents }
+#[tauri::command]
+pub fn phrase_details(phrase:String,offset:usize,bible:tauri::State<'_,Bible>,phrases:tauri::State<'_,Arc<crate::occurrences::prepared::PreparedPhrases>>,statistics:tauri::State<'_,crate::word_stats::WordStatistics>)->Result<PhrasePage,String> {
+    Ok(PhrasePage {details:phrases.detail(&bible,&phrase,offset)?,contents:phrases.contents(&phrase,&statistics)?})
+}
+
+#[tauri::command]
+pub fn verse_list(book: Option<String>, offset: usize, verses: tauri::State<'_, crate::occurrences::prepared::PreparedVerses>) -> Result<crate::occurrences::prepared::VersePage,String> { verses.page(book.as_deref(),offset) }
+#[derive(serde::Deserialize)]
+pub struct VerseDetailQuery { book:String, chapter:u16, verse:u16, offset:usize, sort:Option<crate::detail_lists::PhraseSort> }
+#[tauri::command]
+pub fn verse_details(query:VerseDetailQuery,verses:tauri::State<'_,crate::occurrences::prepared::PreparedVerses>,phrases:tauri::State<'_,Arc<crate::occurrences::prepared::PreparedPhrases>>,statistics:tauri::State<'_,crate::word_stats::WordStatistics>)->Result<crate::occurrences::prepared::VerseDetail,String> {
+    let mut detail=verses.detail_sorted(&phrases,&query.book,query.chapter,query.verse,query.offset,query.sort.unwrap_or_default())?;
+    detail.word_entries=crate::detail_lists::context_words(&detail.summary.verse.text,&detail.word_parts,&statistics)?;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub fn reader_highlights(book:String,chapter:u16,verses:tauri::State<'_,crate::occurrences::prepared::PreparedVerses>,phrases:tauri::State<'_,Arc<crate::occurrences::prepared::PreparedPhrases>>,statistics:tauri::State<'_,crate::word_stats::WordStatistics>,books:tauri::State<'_,crate::book_stats::BookStatistics>)->Result<crate::reader_highlights::ChapterHighlights,String> {
+    verses.highlights(&phrases,&statistics,&books,&book,chapter)
+}

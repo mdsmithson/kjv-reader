@@ -61,7 +61,13 @@ export const highlighted = (text: string, query: Query): string => {
   const spans = [
     ...(query.normalizedWords
       ? normalizedSpans(text, query.text)
-      : literalSpans(text, query)),
+      : !query.partial
+        ? query.phrase
+          ? normalizedSpans(text, query.text)
+          : words(text).filter((word) =>
+              words(query.text).some((term) => term.text === word.text),
+            )
+        : literalSpans(text, query)),
   ].sort((left, right) => left.start - right.start || right.end - left.end);
   const merged = spans.reduce<Span[]>((ranges, span) => {
     const last = ranges.at(-1);

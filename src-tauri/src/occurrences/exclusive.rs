@@ -24,7 +24,7 @@ impl OccurrenceIndex {
     }
 
     fn open_exclusive(&self, length: u16) -> io::Result<(File, Vec<u64>)> {
-        let mut file = File::open(self.exclusive_path(length))?;
+        let mut file = self.read_file(&format!("exclusive-{length}.bin"))?;
         let mut magic = [0; 8];
         let mut fingerprint = [0; 32];
         file.read_exact(&mut magic)?;

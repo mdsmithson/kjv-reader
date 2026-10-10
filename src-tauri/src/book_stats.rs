@@ -1,15 +1,15 @@
 //! One corpus pass computes per-book counts and global word ownership.
 use crate::bible::Bible;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommonWord {
     pub word: String,
     pub count: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BookStats {
     pub name: String,
@@ -22,7 +22,7 @@ pub struct BookStats {
     pub chapters: Vec<ChapterStats>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterStats {
     pub chapter: u16,
@@ -31,6 +31,7 @@ pub struct ChapterStats {
     pub exclusive_words: Vec<CommonWord>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct BookStatistics(BTreeMap<String, BookStats>);
 
 fn leaders<'a>(words: impl Iterator<Item = (&'a String, &'a usize)>) -> Vec<CommonWord> {

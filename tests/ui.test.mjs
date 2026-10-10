@@ -1,8 +1,12 @@
+import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 import { exclusiveFixture } from "./exclusive-fixture.mjs";
+import { wordFixture } from "./word-fixture.mjs";
+import { verseFixture } from "./verse-fixture.mjs";
+import { phraseFixture } from "./phrase-fixture.mjs";
 import { summarize } from "./spatial-fixture.mjs";
 
 // Exercise the actual UI bundle through the same command boundary as Tauri.
@@ -33,6 +37,9 @@ const tokenize = (text) =>
   (text.match(/[\p{L}\p{N}']+/gu) ?? [])
     .map((word) => word.replace(/^'+|'+$/g, "").toLowerCase())
     .filter(Boolean);
+const wordCatalogue = wordFixture(corpus, tokenize);
+const phraseCatalogue = phraseFixture(corpus, tokenize, wordCatalogue);
+const verseCatalogue = verseFixture(corpus, tokenize, wordCatalogue);
 const tokenLines = corpus.map((verse) => ({
   book: verse.book,
   chapter: verse.chapter,
@@ -67,10 +74,18 @@ const highlightQuery = {
   book: null,
   phrase: false,
   offset: 0,
+  partial: true,
 };
 assert.equal(
   highlighted("God, WORD & godhead", highlightQuery),
   "<mark>God</mark>, <mark>WORD</mark> &amp; <mark>god</mark>head",
+);
+assert.equal(
+  highlighted("God, WORD & godhead God's", {
+    ...highlightQuery,
+    partial: false,
+  }),
+  "<mark>God</mark>, <mark>WORD</mark> &amp; godhead God&#39;s",
 );
 assert.equal(
   highlighted("a+b <script>", { ...highlightQuery, text: "a+b" }),
@@ -100,6 +115,44 @@ assert.equal(
   }),
   "<mark>a a a</mark>",
 );
+// Invalid saved values cannot become CSS or corrupt occurrence settings.
+const readerHighlightBundle = await build({
+  entryPoints: ["src/reader-highlights.ts"],
+  bundle: true,
+  write: false,
+  format: "esm",
+});
+const { parseReaderHighlights, readerWordHighlights } = await import(
+  `data:text/javascript;base64,${Buffer.from(readerHighlightBundle.outputFiles[0].text).toString("base64")}`
+);
+const invalidSaved = parseReaderHighlights({
+  version: 1,
+  options: {
+    exclusive: { enabled: true, color: "red;display:none" },
+    firstMention: { enabled: "yes", color: "#ABCDEF" },
+    occurrences: { enabled: true, color: "#000000", count: -1 },
+  },
+});
+assert.equal(invalidSaved.exclusive.color, "#f6d887");
+assert.equal(invalidSaved.firstMention.enabled, false);
+assert.equal(invalidSaved.firstMention.color, "#abcdef");
+assert.equal(invalidSaved.occurrences.count, 7);
+const darkMarkup = readerWordHighlights(
+  "God & godhead",
+  [
+    {
+      start: 0,
+      end: 3,
+      word: "god",
+      count: 7,
+      exclusive: false,
+      firstMention: true,
+    },
+  ],
+  { ...invalidSaved, firstMention: { enabled: false, color: "#abcdef" } },
+);
+assert.match(darkMarkup, /background:#000000;color:#ffffff/);
+assert.match(darkMarkup, /God<\/mark> &amp; godhead/);
 const books = [...new Set(corpus.map((verse) => verse.book))].map((name) => ({
   name,
   chapters: Math.max(
@@ -113,13 +166,54 @@ const dom = new JSDOM('<div id="app"></div>', {
   url: "http://localhost",
 });
 const { window } = dom;
-window.HTMLElement.prototype.scrollTo = () => {};
+window.HTMLElement.prototype.scrollTo = function (options) {
+  this.scrollTop = options?.top ?? this.scrollTop;
+  this.scrollLeft = options?.left ?? this.scrollLeft;
+};
 window.HTMLElement.prototype.scrollIntoView = () => {};
 const pause = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
+const chapterHighlights = readerHighlightFixture(
+  corpus,
+  wordCatalogue,
+  chapterWordOwners,
+);
 window.__TAURI__ = {
   core: {
     invoke: async (command, args) => {
+      if (command === "reader_highlights")
+        return chapterHighlights(String(args.book), Number(args.chapter));
+      if (command === "verse_list")
+        return verseCatalogue.list(args.book, Number(args.offset));
+      if (command === "verse_details") {
+        const query = args.query;
+        if (query.sort?.field !== "phrase") await pause(10);
+        return verseCatalogue.detail(
+          String(query.book),
+          Number(query.chapter),
+          Number(query.verse),
+          Number(query.offset),
+          query.sort,
+        );
+      }
+      if (command === "word_list")
+        return wordCatalogue.list(
+          String(args.text),
+          Number(args.offset),
+          args.books,
+          args.count,
+        );
+      if (command === "saved_phrases")
+        return phraseCatalogue.list(
+          savedLengths,
+          exclusiveSaved,
+          Number(args.offset),
+          args.filters,
+        );
+      if (command === "phrase_details")
+        return phraseCatalogue.detail(String(args.phrase), Number(args.offset));
+      if (command === "word_details")
+        return wordCatalogue.detail(String(args.word));
       if (command === "catalog") return books;
       if (command === "exclusive_count" || command === "exclusive_phrases") {
         exclusiveRequests.push({ command, ...args });
@@ -215,11 +309,22 @@ window.__TAURI__ = {
               ? ` ${tokenize(verse.text).join(" ")} `.includes(
                   ` ${tokenize(query.text).join(" ")} `,
                 )
-              : query.phrase
-                ? verse.text.toLowerCase().includes(text)
-                : text
-                    .split(/\s+/)
-                    .every((word) => verse.text.toLowerCase().includes(word))),
+              : !query.partial
+                ? tokenize(query.text).length > 0 &&
+                  (query.phrase
+                    ? ` ${tokenize(verse.text).join(" ")} `.includes(
+                        ` ${tokenize(query.text).join(" ")} `,
+                      )
+                    : tokenize(query.text).every((word) =>
+                        tokenize(verse.text).includes(word),
+                      ))
+                : query.phrase
+                  ? verse.text.toLowerCase().includes(text)
+                  : text
+                      .split(/\s+/)
+                      .every((word) =>
+                        verse.text.toLowerCase().includes(word),
+                      )),
         );
         return {
           total: verses.length,
@@ -365,9 +470,389 @@ const change = (selector, value) => {
   find(selector).value = value;
   find(selector).dispatchEvent(new window.Event("change", { bubbles: true }));
 };
-await pause(30);
-assert.equal(window.document.querySelectorAll(".verse").length, 31);
+const initializationDeadline = Date.now() + 2000;
+while (
+  !window.document.querySelectorAll(".verse").length &&
+  Date.now() < initializationDeadline
+)
+  await pause(10);
+assert.equal(
+  window.document.querySelectorAll(".verse").length,
+  31,
+  find("[role=alert]")?.textContent ?? "Reader did not initialize",
+);
 assert.match(find(".verse").textContent, /In the beginning God/);
+// The reader drawer previews rules, closes without clearing highlights, and saves across sessions.
+assert.equal(
+  find("#highlight-options-toggle").getAttribute("aria-expanded"),
+  "false",
+);
+assert.ok(find("#reader-highlight-panel").hasAttribute("inert"));
+find("#highlight-options-toggle").click();
+assert.ok(find("#reader-highlight-panel").classList.contains("is-open"));
+const highlightChange = (name, value) => {
+  const input = find(`#reader-highlights-form [name="${name}"]`);
+  if (input.type === "checkbox") input.checked = value;
+  else input.value = String(value);
+  input.dispatchEvent(new window.Event("change", { bubbles: true }));
+};
+highlightChange("firstMention", true);
+assert.equal(
+  window.document.querySelectorAll(
+    '#verse-1 [data-highlight-rules~="firstMention"]',
+  ).length,
+  8,
+);
+assert.equal(
+  [
+    ...window.document.querySelectorAll(
+      '#verse-1 [data-highlight-rules~="firstMention"]',
+    ),
+  ].filter((mark) => mark.textContent.toLowerCase() === "the").length,
+  1,
+);
+highlightChange("firstMentionColor", "#ffccdd");
+assert.equal(
+  find('#verse-1 [data-highlight-rules~="firstMention"]').style.backgroundColor,
+  "rgb(255, 204, 221)",
+);
+highlightChange("occurrences", true);
+highlightChange("count", 63919);
+assert.ok(
+  [
+    ...window.document.querySelectorAll(
+      '.reader-word-highlight[data-highlight-rules~="occurrences"]',
+    ),
+  ].every((mark) => mark.textContent.toLowerCase() === "the"),
+);
+assert.ok(
+  find(
+    '#verse-1 [data-highlight-rules="firstMention occurrences"]',
+  ).style.background.includes("linear-gradient"),
+);
+highlightChange("exclusive", true);
+highlightChange("exclusiveColor", "#ffed00");
+const saveHighlights = () =>
+  find("#reader-highlights-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+saveHighlights();
+assert.match(find("#highlight-save-status").textContent, /options saved/);
+const savedHighlights = JSON.parse(
+  window.localStorage.getItem("kjv-reader:highlight-settings:v1"),
+);
+assert.equal(savedHighlights.options.occurrences.count, 63919);
+assert.equal(savedHighlights.options.exclusive.color, "#ffed00");
+find("#highlight-options-toggle").click();
+assert.ok(!find("#reader-highlight-panel").classList.contains("is-open"));
+assert.ok(find(".reader-word-highlight"));
+change("#chapter", "2");
+await pause(110);
+assert.ok(find('.reader-word-highlight[data-highlight-rules~="exclusive"]'));
+assert.ok(
+  [
+    ...window.document.querySelectorAll(
+      '.reader-word-highlight[data-highlight-rules~="exclusive"]',
+    ),
+  ].some((mark) => mark.textContent === "Pison"),
+);
+assert.equal(
+  find('#reader-highlights-form [name="firstMentionColor"]').value,
+  "#ffccdd",
+);
+find("#highlight-options-toggle").click();
+highlightChange("count", 1);
+assert.ok(
+  [
+    ...window.document.querySelectorAll(
+      '[data-highlight-rules="exclusive firstMention occurrences"]',
+    ),
+  ].some((mark) => mark.textContent === "Pison"),
+);
+// A new app instance restores saved options; unsaved edits remain session-only.
+const restoredDom = new JSDOM('<div id="app"></div>', {
+  runScripts: "outside-only",
+  url: "http://localhost",
+});
+restoredDom.window.HTMLElement.prototype.scrollTo = () => {};
+restoredDom.window.HTMLElement.prototype.scrollIntoView = () => {};
+restoredDom.window.__TAURI__ = window.__TAURI__;
+restoredDom.window.localStorage.setItem(
+  "kjv-reader:highlight-settings:v1",
+  JSON.stringify(savedHighlights),
+);
+restoredDom.window.eval(bundle.outputFiles[0].text);
+const restoreDeadline = Date.now() + 2000;
+while (
+  !restoredDom.window.document.querySelector(".reader-word-highlight") &&
+  Date.now() < restoreDeadline
+)
+  await pause(10);
+assert.ok(restoredDom.window.document.querySelector(".reader-word-highlight"));
+assert.equal(
+  restoredDom.window.document.querySelector("#highlight-count").value,
+  "63919",
+);
+assert.equal(
+  restoredDom.window.document.querySelector("#highlight-firstMention-color")
+    .value,
+  "#ffccdd",
+);
+restoredDom.window.close();
+// Leave later UI tests at their normal unhighlighted reader state.
+highlightChange("exclusive", false);
+highlightChange("firstMention", false);
+highlightChange("occurrences", false);
+find("#highlight-options-toggle").click();
+change("#chapter", "1");
+await pause(30);
+// Reader verses open prepared verse details; every word links to its Word page.
+find("#verse-1").click();
+await pause(30);
+assert.equal(find(".verse-detail-page h1").textContent, "Genesis 1:1");
+const genesisDetail = verseCatalogue.detail("Genesis", 1, 1, 0);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-detail-page dd")].map((cell) =>
+    Number(cell.textContent.replaceAll(",", "")),
+  ),
+  [genesisDetail.words, genesisDetail.letters, genesisDetail.phrases],
+);
+assert.equal(find(".interactive-verse").textContent, corpus[0].text);
+assert.equal(
+  window.document.querySelectorAll(".verse-word").length,
+  genesisDetail.words,
+);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  ),
+  genesisDetail.phraseResults.entries.map((entry) => entry.phrase),
+);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row .scripture")].map(
+    (cell) => cell.textContent,
+  ),
+  genesisDetail.phraseResults.entries.map((entry) => entry.display),
+);
+assert.ok(genesisDetail.phraseResults.total < genesisDetail.phrases);
+assert.ok(
+  !genesisDetail.phraseResults.entries.some(
+    (entry) => entry.phrase === "beginning god",
+  ),
+);
+assert.ok(
+  genesisDetail.phraseResults.entries.some(
+    (entry) => entry.display === corpus[0].text,
+  ),
+);
+assert.ok(
+  genesisDetail.phraseResults.entries.some(
+    (entry) => entry.occurrences > 1 && entry.display.includes("God"),
+  ),
+);
+// Every detail-list sort changes the entire list and supports both directions.
+const assertSortPosition = () => {
+  assert.equal(find("main").scrollTop, 725);
+  assert.equal(find("main").scrollLeft, 12);
+};
+const sortClick = (owner, field) => {
+  const button = find(
+    `[data-sort-owner="${owner}"][data-sort-field="${field}"]`,
+  );
+  button.focus();
+  find("main").scrollTop = 725;
+  find("main").scrollLeft = 12;
+  button.click();
+  assertSortPosition();
+  assert.equal(window.document.activeElement.dataset.sortOwner, owner);
+  assert.equal(window.document.activeElement.dataset.sortField, field);
+  if (owner === "verse-phrases")
+    assert.ok(
+      find(".verse-phrase-row"),
+      "Keep existing rows visible while the sort loads",
+    );
+};
+const wordRows = () => [
+  ...window.document.querySelectorAll(".verse-detail-page .context-word-row"),
+];
+assert.equal(wordRows().length, 8);
+assert.deepEqual(
+  wordRows().map((row) => row.dataset.word),
+  genesisDetail.wordEntries.map((entry) => entry.word),
+);
+for (const [field, column] of [
+  ["occurrences", 1],
+  ["letters", 2],
+  ["books", 3],
+]) {
+  sortClick("verse-words", field);
+  let values = wordRows().map((row) =>
+    Number(row.children[column].textContent.replaceAll(",", "")),
+  );
+  assert.ok(values.every((value, i) => !i || values[i - 1] <= value));
+  sortClick("verse-words", field);
+  values = wordRows().map((row) =>
+    Number(row.children[column].textContent.replaceAll(",", "")),
+  );
+  assert.ok(values.every((value, i) => !i || values[i - 1] >= value));
+}
+sortClick("verse-words", "word");
+assert.deepEqual(
+  wordRows().map((row) => row.dataset.word),
+  genesisDetail.wordEntries.map((entry) => entry.word),
+);
+sortClick("verse-words", "word");
+assert.deepEqual(
+  wordRows().map((row) => row.dataset.word),
+  genesisDetail.wordEntries.map((entry) => entry.word).reverse(),
+);
+for (const [field, column] of [
+  ["occurrences", 1],
+  ["books", 2],
+]) {
+  sortClick("verse-phrases", field);
+  await pause(30);
+  assertSortPosition();
+  let values = [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => Number(row.children[column].textContent.replaceAll(",", "")),
+  );
+  assert.ok(values.every((value, i) => !i || values[i - 1] <= value));
+  sortClick("verse-phrases", field);
+  await pause(30);
+  assertSortPosition();
+  values = [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => Number(row.children[column].textContent.replaceAll(",", "")),
+  );
+  assert.ok(values.every((value, i) => !i || values[i - 1] >= value));
+}
+sortClick("verse-phrases", "phrase");
+await pause(30);
+assertSortPosition();
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  ),
+  genesisDetail.phraseResults.entries.map((entry) => entry.phrase),
+);
+find('.verse-detail-page .context-word-row[data-word="god"]').click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, "god");
+find('nav [data-page="reader"]').click();
+find("#verse-1").click();
+await pause(30);
+find('.verse-word[data-word="god"]').click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, "god");
+find('nav [data-page="verses"]').click();
+await pause(30);
+assert.equal(window.document.querySelectorAll(".verse-row").length, 50);
+assert.equal(find(".verse-row strong").textContent, "Genesis 1:1");
+find('[data-action="verses-next"]').click();
+await pause(30);
+assert.equal(
+  find(".verse-row strong").textContent,
+  `${corpus[50].book} ${corpus[50].chapter}:${corpus[50].number}`,
+);
+change("#verses-book", "John");
+await pause(30);
+assert.equal(find(".verse-row strong").textContent, "John 1:1");
+find('nav [data-page="reader"]').click();
+find("#verse-2").click();
+await pause(30);
+assert.ok(verseCatalogue.detail("Genesis", 1, 2, 0).phraseResults.total > 50);
+find('[data-action="verse-phrases-next"]').click();
+await pause(30);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  ),
+  verseCatalogue
+    .detail("Genesis", 1, 2, 50)
+    .phraseResults.entries.map((entry) => entry.phrase),
+);
+// Sort before paging, not just the current 50 rows.
+sortClick("verse-phrases", "occurrences");
+await pause(30);
+assertSortPosition();
+const numericPage = verseCatalogue.detail("Genesis", 1, 2, 0, {
+  field: "occurrences",
+  direction: "asc",
+});
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  ),
+  numericPage.phraseResults.entries.map((entry) => entry.phrase),
+);
+find('[data-action="verse-phrases-next"]').click();
+await pause(30);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  ),
+  verseCatalogue
+    .detail("Genesis", 1, 2, 50, { field: "occurrences", direction: "asc" })
+    .phraseResults.entries.map((entry) => entry.phrase),
+);
+const chosenPhraseLabel = find(".verse-phrase-row .scripture").textContent;
+find(".verse-phrase-row").click();
+await pause(30);
+assert.ok(find(".phrase-detail-page"));
+assert.equal(find(".phrase-detail-page h1").textContent, chosenPhraseLabel);
+assert.ok(
+  window.document.querySelector(".phrase-interactive-title [data-word]"),
+);
+const phraseContents = phraseCatalogue.detail(chosenPhraseLabel);
+assert.equal(
+  window.document.querySelectorAll(".phrase-detail-page .context-word-row")
+    .length,
+  phraseContents.wordEntries.length,
+);
+for (const [owner, rowSelector, fields] of [
+  [
+    "phrase-words",
+    ".phrase-detail-page .context-word-row",
+    [
+      ["occurrences", 1],
+      ["letters", 2],
+      ["books", 3],
+    ],
+  ],
+  [
+    "subphrases",
+    ".subphrases-section .verse-phrase-row",
+    [
+      ["occurrences", 1],
+      ["books", 2],
+    ],
+  ],
+]) {
+  for (const [field, column] of fields) {
+    sortClick(owner, field);
+    let values = [...window.document.querySelectorAll(rowSelector)].map((row) =>
+      Number(row.children[column].textContent.replaceAll(",", "")),
+    );
+    assert.ok(values.every((value, i) => !i || values[i - 1] <= value));
+    sortClick(owner, field);
+    values = [...window.document.querySelectorAll(rowSelector)].map((row) =>
+      Number(row.children[column].textContent.replaceAll(",", "")),
+    );
+    assert.ok(values.every((value, i) => !i || values[i - 1] >= value));
+  }
+}
+find(".phrase-interactive-title [data-word]").click();
+await pause(30);
+assert.ok(find(".word-detail-page"));
+
+find('nav [data-page="reader"]').click();
+find("#verse-1").click();
+await pause(30);
+sortClick("verse-phrases", "phrase");
+await pause(30);
+assertSortPosition();
+find('[data-action="verse-reader"]').click();
+await pause(30);
+assert.equal(find(".selected-verse").id, "verse-1");
 change("#chapter", "2");
 change("#chapter", "3");
 await pause(120);
@@ -387,6 +872,32 @@ await pause(30);
 assert.equal(window.document.querySelectorAll(".result").length, 50);
 assert.ok(window.document.querySelectorAll(".result mark").length >= 50);
 assert.equal(find(".result mark").textContent.toLowerCase(), "god");
+const wholeGodVerses = corpus.filter((verse) =>
+  tokenize(verse.text).includes("god"),
+).length;
+assert.match(
+  find(".result-summary").textContent,
+  new RegExp(wholeGodVerses.toLocaleString()),
+);
+find('[name="partial"]').checked = true;
+find("#search-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+const partialGodVerses = corpus.filter((verse) =>
+  verse.text.toLowerCase().includes("god"),
+).length;
+assert.ok(partialGodVerses > wholeGodVerses);
+assert.match(
+  find(".result-summary").textContent,
+  new RegExp(partialGodVerses.toLocaleString()),
+);
+assert.ok(find('[name="partial"]').checked);
+find('[name="partial"]').checked = false;
+find("#search-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
 find('[data-action="search-next"]').click();
 await pause(30);
 assert.match(find(".chapter-navigation").textContent, /Page 2/);
@@ -800,6 +1311,24 @@ if (expectedExclusive.length > 50) {
   find('[data-action="exclusive-previous"]').click();
   assert.deepEqual(displayedExclusive(), expectedExclusive.slice(0, 50));
 }
+find(".exclusive-word-link").click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, expectedExclusive[0][0]);
+assert.equal(
+  Number(find(".word-detail-page dd").textContent.replaceAll(",", "")),
+  expectedExclusive[0][1],
+);
+assert.deepEqual(
+  [
+    ...window.document.querySelectorAll(
+      ".word-book-list button span:first-child",
+    ),
+  ].map((entry) => entry.textContent),
+  ["Genesis"],
+);
+find('nav [data-page="books"]').click();
+await pause(30);
+find(".exclusive-count").click();
 find('.exclusive-words-page [data-page="books"]').click();
 await pause(30);
 assert.equal(find(".books-page h2").textContent, "Genesis");
@@ -885,6 +1414,330 @@ assert.equal(occurrenceRequests.at(-1).offset, 50);
 change("#occurrence-mode", "exact");
 assert.ok(!find("#occurrence-words").closest("label").hidden);
 assert.equal(find("#occurrence-words").value, "1");
+find('nav [data-page="words"]').click();
+await pause(30);
+const displayedWords = () =>
+  [...window.document.querySelectorAll(".word-row")].map(
+    (row) => row.dataset.word,
+  );
+const allWords = [
+  ...new Set(corpus.flatMap((verse) => tokenize(verse.text))),
+].sort();
+assert.deepEqual(displayedWords(), allWords.slice(0, 50));
+assert.ok(find('[data-action="words-previous"]').disabled);
+find('[data-action="words-next"]').click();
+await pause(30);
+assert.deepEqual(displayedWords(), allWords.slice(50, 100));
+find("#word-filter").value = "GOD";
+find("#words-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+assert.deepEqual(
+  displayedWords(),
+  allWords.filter((word) => word.includes("god")).slice(0, 50),
+);
+const godTokens = corpus
+  .flatMap((verse) => tokenize(verse.text))
+  .filter((word) => word === "god").length;
+const godBooks = [
+  ...new Set(
+    corpus
+      .filter((verse) => tokenize(verse.text).includes("god"))
+      .map((verse) => verse.book),
+  ),
+];
+const godRow = find('[data-word="god"]');
+assert.equal(
+  Number(godRow.children[1].textContent.replaceAll(",", "")),
+  godTokens,
+);
+assert.equal(Number(godRow.children[2].textContent), godBooks.length);
+godRow.click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, "god");
+assert.deepEqual(
+  [...window.document.querySelectorAll(".word-detail-page dd")].map((entry) =>
+    Number(entry.textContent.replaceAll(",", "")),
+  ),
+  [godTokens, godBooks.length, 3],
+);
+assert.deepEqual(
+  [
+    ...window.document.querySelectorAll(
+      ".word-book-list button span:first-child",
+    ),
+  ].map((entry) => entry.textContent),
+  godBooks,
+);
+assert.match(
+  find(".word-detail-page .result-reference").textContent,
+  /Genesis 1:1/,
+);
+find('.word-book-list [data-word-book="Exodus"]').click();
+await pause(30);
+assert.equal(find("#query").value, "god");
+assert.equal(find("#search-book").value, "Exodus");
+assert.ok(!find('[name="partial"]').checked);
+find('nav [data-page="words"]').click();
+await pause(30);
+assert.equal(find("#word-filter").value, "GOD");
+find('[data-word="god"]').click();
+await pause(30);
+find(".word-detail-page .result").click();
+await pause(30);
+assert.equal(find(".selected-verse").id, "verse-1");
+find('nav [data-page="words"]').click();
+await pause(30);
+find("#word-filter").value = "zzzz_no_word";
+find("#words-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+assert.match(find(".notice").textContent, /No words match/);
+// Clicking count headers exposes exact filters, including the user's 66-book case.
+find("#word-filter").value = "";
+find('[data-word-filter="books"]').click();
+assert.ok(!find("#word-books-filter").closest("label").hidden);
+find("#word-books-filter").value = "66";
+find('[data-word-filter="count"]').click();
+assert.equal(find("#word-books-filter").value, "66");
+const submitWords = () =>
+  find("#words-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+submitWords();
+await pause(30);
+const inEveryBook = allWords.filter(
+  (word) => wordCatalogue.detail(word).books.length === 66,
+);
+assert.ok(inEveryBook.length > 0);
+assert.deepEqual(displayedWords(), inEveryBook.slice(0, 50));
+assert.ok(
+  [...window.document.querySelectorAll(".word-row")].every(
+    (row) => row.children[2].textContent === "66",
+  ),
+);
+const countedWord = inEveryBook[0];
+find('[data-word-filter="count"]').click();
+find("#word-count-filter").value = String(
+  wordCatalogue.detail(countedWord).count,
+);
+submitWords();
+await pause(30);
+assert.deepEqual(
+  displayedWords(),
+  inEveryBook.filter(
+    (word) =>
+      wordCatalogue.detail(word).count ===
+      wordCatalogue.detail(countedWord).count,
+  ),
+);
+find(".word-row").click();
+await pause(30);
+find('.word-detail-page [data-page="words"]').click();
+await pause(30);
+assert.equal(find("#word-books-filter").value, "66");
+assert.equal(
+  find("#word-count-filter").value,
+  String(wordCatalogue.detail(countedWord).count),
+);
+find("#word-count-filter").value = "";
+find("#word-books-filter").value = "";
+submitWords();
+await pause(30);
+assert.deepEqual(displayedWords(), allWords.slice(0, 50));
+// Saved phrase browsing uses every persisted candidate, once, in alphabetical order.
+find('nav [data-page="phrases"]').click();
+await pause(30);
+const expectedSaved = phraseCatalogue.list(savedLengths, exclusiveSaved, 0);
+const displayedSavedPhrases = () =>
+  [...window.document.querySelectorAll(".phrase-row")].map(
+    (row) => row.dataset.savedPhrase,
+  );
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSaved.entries.map((entry) => entry.phrase),
+);
+assert.ok(expectedSaved.total > 50);
+assert.ok(find('[data-action="saved-phrases-previous"]').disabled);
+const firstPhrase = expectedSaved.entries[0];
+assert.deepEqual(
+  [...find(".phrase-row").children]
+    .slice(1)
+    .map((cell) => Number(cell.textContent)),
+  [
+    firstPhrase.words,
+    firstPhrase.letters,
+    firstPhrase.occurrences,
+    firstPhrase.books,
+  ],
+);
+find('[data-action="saved-phrases-next"]').click();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  phraseCatalogue
+    .list(savedLengths, exclusiveSaved, 50)
+    .entries.map((entry) => entry.phrase),
+);
+// Exact phrase count filters combine and survive paging/detail navigation.
+const submitPhrases = () =>
+  find("#phrases-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+const targetPhrase = firstPhrase;
+for (const field of ["words", "letters", "occurrences", "books"]) {
+  find(`[data-phrase-filter="${field}"]`).click();
+  assert.ok(!find(`#phrase-${field}-filter`).closest("label").hidden);
+  find(`#phrase-${field}-filter`).value = String(targetPhrase[field]);
+}
+find('[data-action="wider"]').click();
+assert.equal(find("#phrase-books-filter").value, String(targetPhrase.books));
+assert.equal(
+  find(".layout").style.getPropertyValue("--presentation-width"),
+  "1100px",
+);
+find('[data-action="larger"]').click();
+assert.equal(
+  find("#phrase-letters-filter").value,
+  String(targetPhrase.letters),
+);
+assert.equal(
+  find(".layout").style.getPropertyValue("--scripture-size"),
+  "30px",
+);
+submitPhrases();
+await pause(30);
+const chosenFilters = Object.fromEntries(
+  ["words", "letters", "occurrences", "books"].map((field) => [
+    field,
+    targetPhrase[field],
+  ]),
+);
+const expectedFiltered = phraseCatalogue.list(
+  savedLengths,
+  exclusiveSaved,
+  0,
+  chosenFilters,
+);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedFiltered.entries.map((entry) => entry.phrase),
+);
+find(".phrase-row").click();
+await pause(30);
+find('.phrase-detail-page [data-page="phrases"]').click();
+await pause(30);
+assert.equal(
+  find("#phrase-occurrences-filter").value,
+  String(targetPhrase.occurrences),
+);
+find("#phrase-occurrences-filter").value = "999999";
+submitPhrases();
+await pause(30);
+assert.match(find(".notice").textContent, /No phrases match/);
+assert.ok(find('[data-phrase-filter="occurrences"]'));
+for (const field of ["words", "letters", "occurrences", "books"])
+  find(`#phrase-${field}-filter`).value = "";
+submitPhrases();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSaved.entries.map((entry) => entry.phrase),
+);
+find('[data-action="saved-phrases-next"]').click();
+await pause(30);
+const phrase = displayedSavedPhrases()[0];
+find(".phrase-row").click();
+await pause(30);
+const phraseDetail = phraseCatalogue.detail(phrase);
+assert.equal(find(".phrase-detail-page h1").textContent, phrase);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".phrase-detail-page dd")].map((cell) =>
+    Number(cell.textContent.replaceAll(",", "")),
+  ),
+  [
+    phraseDetail.words,
+    phraseDetail.letters,
+    phraseDetail.occurrences,
+    phraseDetail.books,
+  ],
+);
+assert.deepEqual(
+  [
+    ...window.document.querySelectorAll(
+      ".phrase-detail-page .result-reference",
+    ),
+  ].map((cell) => cell.textContent),
+  phraseDetail.results.verses.map(
+    (verse) => `${verse.book} ${verse.chapter}:${verse.number} ↗`,
+  ),
+);
+assert.ok(window.document.querySelector(".phrase-detail-page mark"));
+find('.phrase-detail-page [data-page="phrases"]').click();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  phraseCatalogue
+    .list(savedLengths, exclusiveSaved, 50)
+    .entries.map((entry) => entry.phrase),
+);
+find(".phrase-row").click();
+await pause(30);
+find(".phrase-detail-page .result").click();
+await pause(30);
+assert.equal(
+  find(".selected-verse").id,
+  `verse-${phraseDetail.results.verses[0].number}`,
+);
+assert.equal(
+  find(".layout").style.getPropertyValue("--presentation-width"),
+  "1100px",
+);
+assert.equal(
+  find(".layout").style.getPropertyValue("--scripture-size"),
+  "30px",
+);
+assert.ok(find('[aria-label="Increase presentation width"]'));
+find('[data-action="narrower"]').click();
+find('[data-action="smaller"]').click();
+assert.equal(
+  find(".layout").style.getPropertyValue("--presentation-width"),
+  "900px",
+);
+assert.equal(
+  find(".layout").style.getPropertyValue("--scripture-size"),
+  "28px",
+);
+// Verse pagination keeps the same phrase and reaches later matching verses.
+savedLengths.clear();
+exclusiveSaved.clear();
+savedLengths.set("[2,null]", new Map([["and the", {}]]));
+find('nav [data-page="phrases"]').click();
+await pause(30);
+find('[data-action="saved-phrases-previous"]').click();
+await pause(30);
+find(".phrase-row").click();
+await pause(30);
+assert.ok(phraseCatalogue.detail("and the").results.total > 50);
+find('[data-action="phrase-verses-next"]').click();
+await pause(30);
+assert.deepEqual(
+  [
+    ...window.document.querySelectorAll(
+      ".phrase-detail-page .result-reference",
+    ),
+  ].map((cell) => cell.textContent),
+  phraseCatalogue
+    .detail("and the", 50)
+    .results.verses.map(
+      (verse) => `${verse.book} ${verse.chapter}:${verse.number} ↗`,
+    ),
+);
+find('[data-action="phrase-verses-previous"]').click();
+await pause(30);
+assert.ok(find('[data-action="phrase-verses-previous"]').disabled);
 find('[data-page="search"]').click();
 window.__TAURI__.core.invoke = async () => {
   throw new Error("Transport unavailable");

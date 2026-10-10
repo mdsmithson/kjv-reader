@@ -80,7 +80,7 @@ export const exclusiveWordsView = (state: State): string => {
     ${
       words.length
         ? `<div class="result-summary"><strong>Word · Appearances in ${escape(label)}</strong><span>${offset + 1}–${offset + entries.length} of ${words.length.toLocaleString()}</span></div>
-      <ol class="exclusive-word-list" start="${offset + 1}">${entries.map((entry) => `<li><span class="scripture">${escape(entry.word)}</span><span class="exclusive-frequency">${entry.count.toLocaleString()}</span></li>`).join("")}</ol>
+      <ol class="exclusive-word-list" start="${offset + 1}">${entries.map((entry) => `<li><button class="scripture exclusive-word-link" data-word="${escape(entry.word)}" aria-label="Open the Word page for ${escape(entry.word)}">${escape(entry.word)}</button><span class="exclusive-frequency">${entry.count.toLocaleString()}</span></li>`).join("")}</ol>
       <div class="chapter-navigation"><button data-action="exclusive-previous"${offset === 0 ? " disabled" : ""}>← Previous words</button><span>Page ${Math.floor(offset / pageSize) + 1}</span><button data-action="exclusive-next"${offset + pageSize >= words.length ? " disabled" : ""}>Next words →</button></div>`
         : `<p class="notice">No words are exclusive to this ${scope}.</p>`
     }

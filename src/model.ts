@@ -1,3 +1,104 @@
+export type ReaderHighlightRule = Readonly<{ enabled: boolean; color: string }>;
+export type ReaderHighlightOptions = Readonly<{
+  exclusive: ReaderHighlightRule;
+  firstMention: ReaderHighlightRule;
+  occurrences: ReaderHighlightRule & Readonly<{ count: number }>;
+}>;
+export type ReaderHighlightWord = Readonly<{
+  start: number;
+  end: number;
+  word: string;
+  count: number;
+  exclusive: boolean;
+  firstMention: boolean;
+}>;
+export type ReaderChapterHighlights = Readonly<{
+  book: string;
+  chapter: number;
+  verses: readonly Readonly<{
+    number: number;
+    words: readonly ReaderHighlightWord[];
+  }>[];
+}>;
+export const defaultReaderHighlights: ReaderHighlightOptions = {
+  exclusive: { enabled: false, color: "#f6d887" },
+  firstMention: { enabled: false, color: "#b8dec1" },
+  occurrences: { enabled: false, color: "#bad6f6", count: 7 },
+};
+export type DetailSort = Readonly<{
+  field: "phrase" | "word" | "occurrences" | "letters" | "books";
+  direction: "asc" | "desc";
+}>;
+export type ContextWord = Readonly<{
+  word: string;
+  display: string;
+  occurrences: number;
+  letters: number;
+  books: number;
+}>;
+export type VerseSummary = Readonly<{
+  verse: Verse;
+  words: number;
+  letters: number;
+  phrases: number;
+}>;
+export type VersePage = Readonly<{
+  total: number;
+  entries: readonly VerseSummary[];
+}>;
+export type VerseDetail = VerseSummary &
+  Readonly<{
+    wordParts: readonly Readonly<{
+      start: number;
+      end: number;
+      word: string;
+    }>[];
+    phraseResults: SavedPhrasePage;
+    wordEntries: readonly ContextWord[];
+  }>;
+export type SavedPhrase = Readonly<{
+  phrase: string;
+  display?: string;
+  words: number;
+  letters: number;
+  books: number;
+  occurrences: number;
+}>;
+export type PhraseFilters = Readonly<{
+  words: number | null;
+  letters: number | null;
+  occurrences: number | null;
+  books: number | null;
+}>;
+export type PhraseFilterField = keyof PhraseFilters;
+export type SavedPhrasePage = Readonly<{
+  total: number;
+  entries: readonly SavedPhrase[];
+  persistedLengths: readonly number[];
+}>;
+export type PhraseDetail = SavedPhrase &
+  Readonly<{
+    results: SearchPage;
+    wordParts: VerseDetail["wordParts"];
+    wordEntries: readonly ContextWord[];
+    subphraseResults: SavedPhrasePage;
+  }>;
+export type WordSummary = Readonly<{
+  word: string;
+  count: number;
+  books: number;
+}>;
+export type WordPage = Readonly<{
+  total: number;
+  entries: readonly WordSummary[];
+}>;
+export type WordDetail = Readonly<{
+  word: string;
+  count: number;
+  books: readonly Readonly<{ name: string; count: number }>[];
+  firstMention: Verse;
+  letters: number;
+}>;
 export type ExclusivePhrasePage = Readonly<{
   total: number;
   entries: readonly Readonly<{ phrase: string; count: number }>[];
@@ -36,6 +137,7 @@ export type Query = Readonly<{
   book: string | null;
   phrase: boolean;
   offset: number;
+  partial?: boolean;
   normalizedWords?: boolean;
   includedBooks?: readonly string[] | null;
 }>;
@@ -73,7 +175,28 @@ export type OccurrencePage = Readonly<{
   builtFilters?: boolean;
 }>;
 export type State = Readonly<{
+  readerHighlightOptions: ReaderHighlightOptions;
+  readerHighlightData: ReaderChapterHighlights | null;
+  highlightPanelOpen: boolean;
+  highlightSaveStatus: "" | "unsaved" | "saved" | "error";
+  versePhraseSort: DetailSort;
+  verseWordSort: DetailSort;
+  phraseWordSort: DetailSort;
+  subphraseSort: DetailSort;
+  subphraseOffset: number;
+  verseBook: string | null;
+  verseOffset: number;
+  verseResults: VersePage | null;
+  selectedVerse: Location | null;
+  versePhraseOffset: number;
+  verseDetail: VerseDetail | null;
   page:
+    | "verses"
+    | "verse-detail"
+    | "phrases"
+    | "phrase-detail"
+    | "words"
+    | "word-detail"
     | "reader"
     | "search"
     | "occurrences"
@@ -82,6 +205,21 @@ export type State = Readonly<{
     | "chapter-words"
     | "book-words"
     | "book-phrases";
+  phraseFilters: PhraseFilters;
+  phraseFilter: PhraseFilterField | null;
+  savedPhraseOffset: number;
+  savedPhrases: SavedPhrasePage | null;
+  selectedPhrase: string;
+  phraseVerseOffset: number;
+  phraseDetail: PhraseDetail | null;
+  wordBooks: number | null;
+  wordCount: number | null;
+  wordFilter: "books" | "count" | null;
+  wordText: string;
+  wordOffset: number;
+  wordResults: WordPage | null;
+  selectedWord: string;
+  wordDetail: WordDetail | null;
   exclusiveOffset: number;
   phraseCounts: readonly (number | null)[];
   phraseCountsError: string | null;
@@ -99,10 +237,50 @@ export type State = Readonly<{
   occurrenceQuery: OccurrenceQuery;
   occurrences: OccurrencePage | null;
   size: number;
+  width: number;
   busy: boolean;
   error: string | null;
 }>;
 export type Action =
+  | { type: "reader-highlight-options"; options: ReaderHighlightOptions }
+  | { type: "reader-highlight-panel"; open: boolean }
+  | { type: "reader-highlight-saved"; status: "saved" | "error" }
+  | { type: "verse-sort"; sort: DetailSort }
+  | { type: "verse-word-sort"; sort: DetailSort }
+  | { type: "phrase-word-sort"; sort: DetailSort }
+  | { type: "subphrase-sort"; sort: DetailSort }
+  | { type: "subphrase-offset"; offset: number }
+  | { type: "verse-query"; book: string | null; offset: number }
+  | { type: "verse-results"; results: VersePage }
+  | {
+      type: "verse-select";
+      location: Location;
+      offset: number;
+      sort: DetailSort;
+    }
+  | { type: "verse-detail"; detail: VerseDetail }
+  | { type: "saved-phrase-query"; offset: number; filters: PhraseFilters }
+  | { type: "phrase-filter"; filter: PhraseFilterField; filters: PhraseFilters }
+  | { type: "saved-phrases"; results: SavedPhrasePage }
+  | { type: "phrase-select"; phrase: string; offset: number }
+  | { type: "phrase-detail"; detail: PhraseDetail }
+  | {
+      type: "word-filter";
+      filter: "books" | "count";
+      text: string;
+      books: number | null;
+      count: number | null;
+    }
+  | {
+      type: "word-query";
+      text: string;
+      offset: number;
+      books: number | null;
+      count: number | null;
+    }
+  | { type: "word-results"; results: WordPage }
+  | { type: "word-select"; word: string }
+  | { type: "word-detail"; detail: WordDetail }
   | { type: "statistics-chapter"; chapter: number }
   | { type: "phrase-count"; length: number; count: number }
   | { type: "phrase-counts-error"; error: string }
@@ -114,17 +292,52 @@ export type Action =
   | { type: "catalog"; books: readonly Book[] }
   | { type: "navigate"; location: Location }
   | { type: "page"; page: State["page"] }
-  | { type: "chapter"; verses: readonly Verse[] }
+  | {
+      type: "chapter";
+      verses: readonly Verse[];
+      highlights: ReaderChapterHighlights;
+    }
   | { type: "query"; query: Query }
   | { type: "results"; results: SearchPage }
   | { type: "occurrence-query"; query: OccurrenceQuery }
   | { type: "occurrences"; results: OccurrencePage }
   | { type: "size"; size: number }
+  | { type: "width"; width: number }
   | { type: "busy" }
   | { type: "error"; error: string };
 
 export const initialState: State = {
   page: "reader",
+  readerHighlightOptions: defaultReaderHighlights,
+  readerHighlightData: null,
+  highlightPanelOpen: false,
+  highlightSaveStatus: "",
+  versePhraseSort: { field: "phrase", direction: "asc" },
+  verseWordSort: { field: "word", direction: "asc" },
+  phraseWordSort: { field: "word", direction: "asc" },
+  subphraseSort: { field: "phrase", direction: "asc" },
+  subphraseOffset: 0,
+  verseBook: null,
+  verseOffset: 0,
+  verseResults: null,
+  selectedVerse: null,
+  versePhraseOffset: 0,
+  verseDetail: null,
+  phraseFilters: { words: null, letters: null, occurrences: null, books: null },
+  phraseFilter: null,
+  savedPhraseOffset: 0,
+  savedPhrases: null,
+  selectedPhrase: "",
+  phraseVerseOffset: 0,
+  phraseDetail: null,
+  wordBooks: null,
+  wordCount: null,
+  wordFilter: null,
+  wordText: "",
+  wordOffset: 0,
+  wordResults: null,
+  selectedWord: "",
+  wordDetail: null,
   exclusiveOffset: 0,
   phraseCounts: Array.from({ length: 32 }, () => null),
   phraseCountsError: null,
@@ -142,6 +355,7 @@ export const initialState: State = {
   occurrenceQuery: { count: 7, words: 2, upTo: true, offset: 0 },
   occurrences: null,
   size: 28,
+  width: 900,
   busy: true,
   error: null,
 };
@@ -149,6 +363,142 @@ export const initialState: State = {
 // Explicit variants keep transitions exhaustive and free of side effects.
 export const reduce = (state: State, action: Action): State => {
   switch (action.type) {
+    case "reader-highlight-options":
+      return {
+        ...state,
+        readerHighlightOptions: action.options,
+        highlightSaveStatus: "unsaved",
+      };
+    case "reader-highlight-panel":
+      return { ...state, highlightPanelOpen: action.open };
+    case "reader-highlight-saved":
+      return { ...state, highlightSaveStatus: action.status };
+    case "verse-sort":
+      return {
+        ...state,
+        versePhraseSort: action.sort,
+        versePhraseOffset: 0,
+        error: null,
+      };
+    case "verse-word-sort":
+      return { ...state, verseWordSort: action.sort };
+    case "phrase-word-sort":
+      return { ...state, phraseWordSort: action.sort };
+    case "subphrase-sort":
+      return { ...state, subphraseSort: action.sort, subphraseOffset: 0 };
+    case "subphrase-offset":
+      return { ...state, subphraseOffset: action.offset };
+    case "verse-query":
+      return {
+        ...state,
+        page: "verses",
+        verseBook: action.book,
+        verseOffset: action.offset,
+        verseResults: null,
+        busy: true,
+        error: null,
+      };
+    case "verse-results":
+      return {
+        ...state,
+        verseResults: action.results,
+        busy: false,
+        error: null,
+      };
+    case "verse-select":
+      return {
+        ...state,
+        page: "verse-detail",
+        selectedVerse: action.location,
+        versePhraseOffset: action.offset,
+        versePhraseSort: action.sort,
+        verseDetail: null,
+        busy: true,
+        error: null,
+      };
+    case "verse-detail":
+      return { ...state, verseDetail: action.detail, busy: false, error: null };
+    case "phrase-filter":
+      return {
+        ...state,
+        phraseFilter:
+          state.phraseFilter === action.filter ? null : action.filter,
+        phraseFilters: action.filters,
+      };
+    case "saved-phrase-query":
+      return {
+        ...state,
+        page: "phrases",
+        savedPhraseOffset: action.offset,
+        phraseFilters: action.filters,
+        savedPhrases: null,
+        busy: true,
+        error: null,
+      };
+    case "saved-phrases":
+      return {
+        ...state,
+        savedPhrases: action.results,
+        busy: false,
+        error: null,
+      };
+    case "phrase-select":
+      return {
+        ...state,
+        page: "phrase-detail",
+        selectedPhrase: action.phrase,
+        subphraseOffset:
+          state.selectedPhrase === action.phrase ? state.subphraseOffset : 0,
+        phraseVerseOffset: action.offset,
+        phraseDetail: null,
+        busy: true,
+        error: null,
+      };
+    case "phrase-detail":
+      return {
+        ...state,
+        phraseDetail: action.detail,
+        busy: false,
+        error: null,
+      };
+    case "word-filter":
+      return {
+        ...state,
+        wordFilter: state.wordFilter === action.filter ? null : action.filter,
+        wordText: action.text,
+        wordBooks: action.books,
+        wordCount: action.count,
+      };
+    case "word-query":
+      return {
+        ...state,
+        page: "words",
+        wordText: action.text,
+        wordBooks: action.books,
+        wordCount: action.count,
+        wordOffset: action.offset,
+        wordResults: null,
+        busy: true,
+        error: null,
+      };
+    case "word-results":
+      return {
+        ...state,
+        wordResults: action.results,
+        busy: false,
+        error: null,
+      };
+    case "word-select":
+      return {
+        ...state,
+        page: "word-detail",
+        selectedWord: action.word,
+        wordDetail: null,
+        busy: true,
+        error: null,
+      };
+    case "word-detail":
+      return { ...state, wordDetail: action.detail, busy: false, error: null };
     case "statistics-chapter":
       return {
         ...state,
@@ -215,13 +565,20 @@ export const reduce = (state: State, action: Action): State => {
         location: action.location,
         page: "reader",
         verses: [],
+        readerHighlightData: null,
         busy: true,
         error: null,
       };
     case "page":
       return { ...state, page: action.page };
     case "chapter":
-      return { ...state, verses: action.verses, busy: false, error: null };
+      return {
+        ...state,
+        verses: action.verses,
+        readerHighlightData: action.highlights,
+        busy: false,
+        error: null,
+      };
     case "query":
       return {
         ...state,
@@ -247,6 +604,8 @@ export const reduce = (state: State, action: Action): State => {
         busy: false,
         error: null,
       };
+    case "width":
+      return { ...state, width: Math.max(700, Math.min(1900, action.width)) };
     case "size":
       return { ...state, size: Math.max(20, Math.min(42, action.size)) };
     case "busy":

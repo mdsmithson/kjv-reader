@@ -1,6 +1,10 @@
 import { maxPhraseWords } from "./model";
 import type {
   Book,
+  WordPage,
+  SavedPhrasePage,
+  PhraseDetail,
+  WordDetail,
   ExclusivePhrasePage,
   BookStats,
   Location,
@@ -57,3 +61,42 @@ export const exclusivePhrases = (
   length: number,
   offset: number,
 ) => invoke<ExclusivePhrasePage>("exclusive_phrases", { book, length, offset });
+
+export const wordList = (
+  text: string,
+  offset: number,
+  books: number | null,
+  count: number | null,
+) => invoke<WordPage>("word_list", { text, offset, books, count });
+export const wordDetails = (word: string) =>
+  invoke<WordDetail>("word_details", { word });
+
+export const savedPhrases = (
+  offset: number,
+  filters: import("./model").PhraseFilters,
+) => invoke<SavedPhrasePage>("saved_phrases", { offset, filters });
+export const phraseDetails = (phrase: string, offset: number) =>
+  invoke<PhraseDetail>("phrase_details", { phrase, offset });
+
+export const verseList = (book: string | null, offset: number) =>
+  invoke<import("./model").VersePage>("verse_list", { book, offset });
+export const verseDetails = (
+  location: Location,
+  offset: number,
+  sort: import("./model").DetailSort,
+) =>
+  invoke<import("./model").VerseDetail>("verse_details", {
+    query: {
+      book: location.book,
+      chapter: location.chapter,
+      verse: location.verse,
+      offset,
+      sort,
+    },
+  });
+
+export const readerHighlights = (location: Location) =>
+  invoke<import("./model").ReaderChapterHighlights>("reader_highlights", {
+    book: location.book,
+    chapter: location.chapter,
+  });

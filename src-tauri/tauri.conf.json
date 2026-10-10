@@ -5,7 +5,7 @@
   "identifier": "com.mdsmithson.kjvreader",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run prepare:data && npm run build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
@@ -24,5 +24,12 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
     }
   },
-  "bundle": { "active": true, "targets": ["nsis"], "icon": ["icons/icon.ico"] }
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "data/precomputed/": "precomputed/"
+    }
+  }
 }

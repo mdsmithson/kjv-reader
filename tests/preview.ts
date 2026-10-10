@@ -1,7 +1,11 @@
+import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
 // Development-only visual fixture. Not included in the production entry point.
 import source from "../src-tauri/data/kjv.json";
 import type { Query, OccurrenceQuery } from "../src/model";
 import { exclusiveFixture } from "./exclusive-fixture.mjs";
+import { wordFixture } from "./word-fixture.mjs";
+import { verseFixture } from "./verse-fixture.mjs";
+import { phraseFixture } from "./phrase-fixture.mjs";
 import { summarize } from "./spatial-fixture.mjs";
 const verses = Object.entries(source).map(([reference, text]) => {
   const [, book, chapter, number] = /^(.*) (\d+):(\d+)$/.exec(reference)!;
@@ -11,6 +15,9 @@ const tokenize = (text: string) =>
   (text.match(/[\p{L}\p{N}']+/gu) ?? [])
     .map((word) => word.replace(/^'+|'+$/g, "").toLowerCase())
     .filter(Boolean);
+const wordCatalogue = wordFixture(verses, tokenize);
+const phraseCatalogue = phraseFixture(verses, tokenize, wordCatalogue);
+const verseCatalogue = verseFixture(verses, tokenize, wordCatalogue);
 const tokenLines = verses.map((verse) => ({
   book: verse.book,
   tokens: tokenize(verse.text),
@@ -41,12 +48,55 @@ const saved = new Map<
 >();
 const letterCount = (text: string) =>
   (text.match(/\p{Alphabetic}/gu) ?? []).length;
+const chapterHighlights = readerHighlightFixture(
+  verses,
+  wordCatalogue,
+  chapterWordOwners,
+);
 window.__TAURI__ = {
   core: {
     invoke: async <T>(
       command: string,
       args?: Record<string, unknown>,
     ): Promise<T> => {
+      if (command === "reader_highlights")
+        return chapterHighlights(
+          String(args?.book),
+          Number(args?.chapter),
+        ) as T;
+      if (command === "verse_list")
+        return verseCatalogue.list(args?.book, Number(args?.offset)) as T;
+      if (command === "verse_details") {
+        const query = args?.query as Record<string, unknown>;
+        return verseCatalogue.detail(
+          String(query.book),
+          Number(query.chapter),
+          Number(query.verse),
+          Number(query.offset),
+          query.sort,
+        ) as T;
+      }
+      if (command === "word_list")
+        return wordCatalogue.list(
+          String(args?.text),
+          Number(args?.offset),
+          args?.books,
+          args?.count,
+        ) as T;
+      if (command === "saved_phrases")
+        return phraseCatalogue.list(
+          saved,
+          exclusiveCache,
+          Number(args?.offset),
+          args?.filters,
+        ) as T;
+      if (command === "phrase_details")
+        return phraseCatalogue.detail(
+          String(args?.phrase),
+          Number(args?.offset),
+        ) as T;
+      if (command === "word_details")
+        return wordCatalogue.detail(String(args?.word)) as T;
       if (command === "catalog")
         return [...new Set(verses.map((verse) => verse.book))].map((name) => ({
           name,
@@ -148,11 +198,22 @@ window.__TAURI__ = {
               ? ` ${tokenize(verse.text).join(" ")} `.includes(
                   ` ${tokenize(query.text).join(" ")} `,
                 )
-              : query.phrase
-                ? verse.text.toLowerCase().includes(text)
-                : text
-                    .split(/\s+/)
-                    .every((term) => verse.text.toLowerCase().includes(term))),
+              : !query.partial
+                ? tokenize(query.text).length > 0 &&
+                  (query.phrase
+                    ? ` ${tokenize(verse.text).join(" ")} `.includes(
+                        ` ${tokenize(query.text).join(" ")} `,
+                      )
+                    : tokenize(query.text).every((word) =>
+                        tokenize(verse.text).includes(word),
+                      ))
+                : query.phrase
+                  ? verse.text.toLowerCase().includes(text)
+                  : text
+                      .split(/\s+/)
+                      .every((term) =>
+                        verse.text.toLowerCase().includes(term),
+                      )),
         );
         return {
           total: matches.length,
