@@ -1,0 +1,85 @@
+import { escape } from "./highlight";
+import { pageSize, type BookStats, type State } from "./model";
+
+const common = (entries: BookStats["mostCommon"]) =>
+  entries.length
+    ? entries
+        .map(
+          (entry) =>
+            `<span class="scripture">${escape(entry.word)}</span> (${entry.count.toLocaleString()} appearances)`,
+        )
+        .join(", ")
+    : "No words exclusive to this book.";
+
+export const booksView = (state: State): string => {
+  const stats = state.statistics;
+  return `<section class="search-page books-page"><div class="eyebrow">EXPLORE EACH BOOK</div><h1>Books</h1>
+    <div class="book-list" aria-label="Choose a book">${state.books.map((book) => `<button data-statistics-book="${escape(book.name)}" aria-pressed="${book.name === state.statisticsBook}">${escape(book.name)}</button>`).join("")}</div>
+    <h2>${escape(state.statisticsBook)}</h2>
+    ${
+      state.busy
+        ? '<p class="notice" role="status">Loading book statistics…</p>'
+        : stats
+          ? `<dl class="book-statistics">
+      <div><dt>Most common word${stats.mostCommon.length > 1 ? "s (tied)" : ""}</dt><dd>${common(stats.mostCommon)}</dd></div>
+      <div><dt>Most common word${stats.mostCommonExclusive.length > 1 ? "s (tied)" : ""} found only in this book</dt><dd>${common(stats.mostCommonExclusive)}</dd></div>
+      <div><dt>Words</dt><dd>${stats.words.toLocaleString()}</dd></div>
+      <div><dt>Unique words</dt><dd>${stats.uniqueWords.toLocaleString()}</dd></div>
+      <div><dt>Words only found in this book</dt><dd><button class="exclusive-count" data-action="exclusive-words" aria-label="List all ${stats.exclusiveWords.length} words only found in ${escape(stats.name)}">${stats.exclusiveWords.length.toLocaleString()} words <span aria-hidden="true">→</span></button></dd></div>
+      <div><dt>Verses</dt><dd>${stats.verses.toLocaleString()}</dd></div>
+    </dl>`
+          : ""
+    }
+    ${stats ? phraseButtons(state) : ""}
+    <p class="counting-note">Words are counted without regard to case. Punctuation separates words; internal apostrophes stay in the word. Common words include every word, including “the” and “and”. Exclusive words occur nowhere in the other books. All ties are shown alphabetically.</p>
+  </section>`;
+};
+
+export const exclusiveWordsView = (state: State): string => {
+  const words = state.statistics?.exclusiveWords ?? [];
+  const offset = state.exclusiveOffset;
+  const entries = words.slice(offset, offset + pageSize);
+  return `<section class="search-page exclusive-words-page">
+    <button data-page="books">← Back to ${escape(state.statisticsBook)}</button>
+    <div class="eyebrow">${escape(state.statisticsBook)}</div><h1>Words only found in this book</h1>
+    <p class="intro">${words.length.toLocaleString()} distinct words, ordered from most common to least common. Ties are alphabetical.</p>
+    ${
+      words.length
+        ? `<div class="result-summary"><strong>Word · Appearances in ${escape(state.statisticsBook)}</strong><span>${offset + 1}–${offset + entries.length} of ${words.length.toLocaleString()}</span></div>
+      <ol class="exclusive-word-list" start="${offset + 1}">${entries.map((entry) => `<li><span class="scripture">${escape(entry.word)}</span><span class="exclusive-frequency">${entry.count.toLocaleString()}</span></li>`).join("")}</ol>
+      <div class="chapter-navigation"><button data-action="exclusive-previous"${offset === 0 ? " disabled" : ""}>← Previous words</button><span>Page ${Math.floor(offset / pageSize) + 1}</span><button data-action="exclusive-next"${offset + pageSize >= words.length ? " disabled" : ""}>Next words →</button></div>`
+        : '<p class="notice">No words are exclusive to this book.</p>'
+    }
+  </section>`;
+};
+
+const phraseButtons = (
+  state: State,
+) => `<section class="exclusive-phrase-section"><h2>Phrases only found in this book</h2>
+  <p class="counting-note">Choose an exact word length. Each count is the number of distinct phrases found only in ${escape(state.statisticsBook)}. Phrases stay within a verse; lists are ordered by appearance count, descending.</p>
+  <div class="phrase-lengths">${state.phraseCounts.map((count, index) => `<button data-phrase-length="${index + 1}" aria-pressed="${state.page === "book-phrases" && state.phraseLength === index + 1}"><strong>${index + 1} ${index === 0 ? "word" : "words"}</strong><span class="phrase-length-count">${count == null ? "…" : count.toLocaleString()} phrases</span></button>`).join("")}</div>
+  ${state.phraseCountsError ? `<p role="alert">${escape(state.phraseCountsError)} <button data-action="phrase-counts-retry">Retry counts</button></p>` : state.phraseCounts.some((count) => count == null) ? '<p role="status" class="counting-note">Building or loading saved phrase counts… You can open a length while counts load.</p>' : ""}
+</section>`;
+
+export const exclusivePhrasesView = (state: State): string => {
+  const page = state.exclusivePhrases;
+  const offset = state.phraseOffset;
+  return `<section class="search-page exclusive-phrases-page"><button data-page="books">← Back to ${escape(state.statisticsBook)}</button>
+    <div class="eyebrow">${escape(state.statisticsBook)}</div><h1>Phrases only found in this book</h1>
+    ${phraseButtons(state)}
+    <h2>${state.phraseLength}-word phrases</h2>
+    ${
+      state.busy
+        ? '<p class="notice" role="status">Building or loading saved phrases…</p>'
+        : page
+          ? `<div class="result-summary"><strong>${page.total.toLocaleString()} distinct phrases</strong><span>${page.total ? offset + 1 : 0}–${offset + page.entries.length} of ${page.total.toLocaleString()}</span></div>
+      ${
+        page.total
+          ? `<ol class="exclusive-word-list" start="${offset + 1}">${page.entries.map((entry) => `<li><span class="scripture">${escape(entry.phrase)}</span><span class="exclusive-frequency">${entry.count.toLocaleString()}</span></li>`).join("")}</ol>
+      <div class="chapter-navigation"><button data-action="phrase-previous"${offset === 0 ? " disabled" : ""}>← Previous phrases</button><span>Page ${Math.floor(offset / pageSize) + 1}</span><button data-action="phrase-next"${offset + pageSize >= page.total ? " disabled" : ""}>Next phrases →</button></div>`
+          : '<p class="notice">No phrases of this length are exclusive to this book.</p>'
+      }`
+          : ""
+    }
+  </section>`;
+};
