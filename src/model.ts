@@ -2,6 +2,12 @@ export type ExclusivePhrasePage = Readonly<{
   total: number;
   entries: readonly Readonly<{ phrase: string; count: number }>[];
 }>;
+export type ChapterStats = Readonly<{
+  chapter: number;
+  words: number;
+  uniqueWords: number;
+  exclusiveWords: readonly Readonly<{ word: string; count: number }>[];
+}>;
 export type BookStats = Readonly<{
   name: string;
   words: number;
@@ -10,6 +16,7 @@ export type BookStats = Readonly<{
   mostCommon: readonly Readonly<{ word: string; count: number }>[];
   mostCommonExclusive: readonly Readonly<{ word: string; count: number }>[];
   exclusiveWords: readonly Readonly<{ word: string; count: number }>[];
+  chapters: readonly ChapterStats[];
 }>;
 export type Book = Readonly<{ name: string; chapters: number }>;
 export type Verse = Readonly<{
@@ -34,6 +41,8 @@ export type Query = Readonly<{
 }>;
 export type OccurrenceQuery = Readonly<{
   count: number;
+  countUpTo?: boolean;
+  anyLength?: boolean;
   words: number;
   upTo: boolean;
   offset: number;
@@ -69,6 +78,8 @@ export type State = Readonly<{
     | "search"
     | "occurrences"
     | "books"
+    | "book-chapter"
+    | "chapter-words"
     | "book-words"
     | "book-phrases";
   exclusiveOffset: number;
@@ -79,6 +90,7 @@ export type State = Readonly<{
   exclusivePhrases: ExclusivePhrasePage | null;
   statistics: BookStats | null;
   statisticsBook: string;
+  statisticsChapter: number;
   books: readonly Book[];
   location: Location;
   verses: readonly Verse[];
@@ -91,6 +103,7 @@ export type State = Readonly<{
   error: string | null;
 }>;
 export type Action =
+  | { type: "statistics-chapter"; chapter: number }
   | { type: "phrase-count"; length: number; count: number }
   | { type: "phrase-counts-error"; error: string }
   | { type: "exclusive-phrase-query"; length: number; offset: number }
@@ -120,6 +133,7 @@ export const initialState: State = {
   exclusivePhrases: null,
   statistics: null,
   statisticsBook: "Genesis",
+  statisticsChapter: 1,
   books: [],
   location: { book: "Genesis", chapter: 1 },
   verses: [],
@@ -135,6 +149,13 @@ export const initialState: State = {
 // Explicit variants keep transitions exhaustive and free of side effects.
 export const reduce = (state: State, action: Action): State => {
   switch (action.type) {
+    case "statistics-chapter":
+      return {
+        ...state,
+        page: "book-chapter",
+        statisticsChapter: action.chapter,
+        exclusiveOffset: 0,
+      };
     case "phrase-count":
       return {
         ...state,
@@ -168,6 +189,7 @@ export const reduce = (state: State, action: Action): State => {
       return {
         ...state,
         statisticsBook: action.book,
+        statisticsChapter: 1,
         exclusiveOffset: 0,
         phraseCounts: Array.from({ length: 32 }, () => null),
         phraseCountsError: null,
@@ -253,3 +275,4 @@ export const adjacent = (state: State, direction: -1 | 1): Location | null => {
 export const reference = (verse: Verse) =>
   `${verse.book} ${verse.chapter}:${verse.number}`;
 export const pageSize = 50;
+export const maxPhraseWords = 32;

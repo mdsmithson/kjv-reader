@@ -10,6 +10,7 @@ import {
 import { escape, highlighted } from "./highlight";
 import {
   booksView,
+  chapterStatisticsView,
   exclusiveWordsView,
   exclusivePhrasesView,
 } from "./books-page";
@@ -82,10 +83,10 @@ export const view = (
   state: State,
 ) => `<div class="layout" style="--scripture-size:${state.size}px">
   <aside><div class="brand-mark" aria-hidden="true">K</div><div class="brand">The Reader</div><div class="brand-caption">KING JAMES · 1611 TYPEFACE</div>
-  <nav aria-label="Main"><button data-page="reader" aria-current="${state.page === "reader" ? "page" : "false"}"><span aria-hidden="true">▤</span> Read the Bible</button><button data-page="search" aria-current="${state.page === "search" ? "page" : "false"}"><span aria-hidden="true">⌕</span> Search</button><button data-page="occurrences" aria-current="${state.page === "occurrences" ? "page" : "false"}"><span aria-hidden="true">≡</span> Occurrences</button><button data-page="books" aria-current="${state.page === "books" || state.page === "book-words" || state.page === "book-phrases" ? "page" : "false"}"><span aria-hidden="true">▥</span> Books</button></nav>
+  <nav aria-label="Main"><button data-page="reader" aria-current="${state.page === "reader" ? "page" : "false"}"><span aria-hidden="true">▤</span> Read the Bible</button><button data-page="search" aria-current="${state.page === "search" ? "page" : "false"}"><span aria-hidden="true">⌕</span> Search</button><button data-page="occurrences" aria-current="${state.page === "occurrences" ? "page" : "false"}"><span aria-hidden="true">≡</span> Occurrences</button><button data-page="books" aria-current="${state.page === "books" || state.page === "book-words" || state.page === "book-phrases" || state.page === "book-chapter" || state.page === "chapter-words" ? "page" : "false"}"><span aria-hidden="true">▥</span> Books</button></nav>
   <div class="sidebar-note"><span class="small-rule"></span><p>“Thy word is a lamp unto my feet, and a light unto my path.”</p><span>PSALM 119:105</span></div>
   <footer><span class="offline-dot"></span> Available offline<div>KJV1611 · Open Font License</div></footer></aside>
-  <main><header><span>${state.page === "reader" ? "SCRIPTURE READER" : state.page === "search" ? "SCRIPTURE SEARCH" : state.page === "books" || state.page === "book-words" || state.page === "book-phrases" ? "BOOK STATISTICS" : "OCCURRENCE SEARCH"}</span><span>THE HOLY BIBLE</span></header>
+  <main><header><span>${state.page === "reader" ? "SCRIPTURE READER" : state.page === "search" ? "SCRIPTURE SEARCH" : state.page === "books" || state.page === "book-words" || state.page === "book-phrases" || state.page === "book-chapter" || state.page === "chapter-words" ? "BOOK STATISTICS" : "OCCURRENCE SEARCH"}</span><span>THE HOLY BIBLE</span></header>
   ${state.error ? `<div class="error" role="alert">${escape(state.error)} <button data-action="retry">Try again</button></div>` : ""}
-  ${state.page === "reader" ? reader(state) : state.page === "search" ? search(state) : state.page === "books" ? booksView(state) : state.page === "book-words" ? exclusiveWordsView(state) : state.page === "book-phrases" ? exclusivePhrasesView(state) : occurrenceView(state)}
+  ${state.page === "reader" ? reader(state) : state.page === "search" ? search(state) : state.page === "books" ? booksView(state) : state.page === "book-chapter" ? chapterStatisticsView(state) : state.page === "book-words" || state.page === "chapter-words" ? exclusiveWordsView(state) : state.page === "book-phrases" ? exclusivePhrasesView(state) : occurrenceView(state)}
   </main></div>`;

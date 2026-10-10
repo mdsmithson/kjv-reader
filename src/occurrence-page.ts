@@ -3,6 +3,7 @@ import { pageSize, type State, type PhraseCount } from "./model";
 
 type Filter = Readonly<{
   title: string;
+  description: string;
   label: string;
   modeName: string;
   name: string;
@@ -19,12 +20,12 @@ type Filter = Readonly<{
 const optionalFilter = (filter: Filter): string => {
   const active = filter.value != null;
   const exactLabel = filter.kind === "minimum" ? "At least" : "Exactly";
-  return `<label>${filter.title}<select name="${filter.modeName}" id="${filter.modeId}" data-controls="${filter.inputId}">
+  return `<div class="filter-card"><h3>${filter.title}</h3><p id="${filter.inputId}-help">${filter.description}</p><div class="filter-controls"><label>Match<select name="${filter.modeName}" id="${filter.modeId}" data-controls="${filter.inputId}" aria-label="${filter.title}: comparison">
     <option value="any"${!active ? " selected" : ""}>Any number</option>
     <option value="exact"${active && !filter.upTo ? " selected" : ""}>${exactLabel}</option>
     ${filter.kind === "range" ? `<option value="upTo"${active && filter.upTo ? " selected" : ""}>Up to</option>` : ""}
   </select></label>
-  <label>${filter.label}<input name="${filter.name}" id="${filter.inputId}" type="number" min="${filter.min}" max="${filter.max}" step="1" required value="${filter.value ?? filter.fallback}"${!active ? " disabled" : ""}></label>`;
+  <label>${filter.label}<input name="${filter.name}" id="${filter.inputId}" aria-describedby="${filter.inputId}-help" type="number" min="${filter.min}" max="${filter.max}" step="1" required value="${filter.value ?? filter.fallback}"${!active ? " disabled" : ""}></label></div></div>`;
 };
 
 const entryMarkup = (
@@ -59,7 +60,9 @@ export const occurrenceView = (state: State): string => {
   const query = state.occurrenceQuery;
   const filters: readonly Filter[] = [
     {
-      title: "In books",
+      title: "Number of books",
+      description:
+        "How many distinct books contain the word or phrase. Any number leaves this unrestricted.",
       label: "Books (1–66)",
       modeName: "bookMode",
       name: "books",
@@ -74,6 +77,8 @@ export const occurrenceView = (state: State): string => {
     },
     {
       title: "Letters in phrase",
+      description:
+        "Total letters in the word or phrase. Spaces, punctuation, and digits do not count.",
       label: "Letters",
       modeName: "letterMode",
       name: "letters",
@@ -88,6 +93,8 @@ export const occurrenceView = (state: State): string => {
     },
     {
       title: "Consecutive verses",
+      description:
+        "Appears in every verse of a run within one chapter. At least sets the minimum run length.",
       label: "Neighboring verses",
       modeName: "consecutiveVersesMode",
       name: "consecutiveVerses",
@@ -101,6 +108,8 @@ export const occurrenceView = (state: State): string => {
     },
     {
       title: "Consecutive chapters",
+      description:
+        "Appears in every chapter of a run within one book. At least sets the minimum run length.",
       label: "Neighboring chapters",
       modeName: "consecutiveChaptersMode",
       name: "consecutiveChapters",
@@ -113,7 +122,9 @@ export const occurrenceView = (state: State): string => {
       kind: "minimum",
     },
     {
-      title: "Chapter frequency",
+      title: "Occurrences in one chapter",
+      description:
+        "At least one chapter must contain exactly this many appearances.",
       label: "Appearances in a chapter",
       modeName: "chapterFrequencyMode",
       name: "chapterFrequency",
@@ -129,17 +140,31 @@ export const occurrenceView = (state: State): string => {
   return `<section class="search-page occurrence-page">
   <div class="eyebrow">PATTERNS IN THE SCRIPTURES</div><h1>Search by occurrence</h1>
   <p class="intro">Find words and phrases by frequency, length, and where they appear.</p>
+  <div class="occurrence-workspace"><section class="occurrence-parameters-pane" aria-labelledby="occurrence-parameters-heading"><h2 id="occurrence-parameters-heading">Search settings</h2>
   <form id="occurrence-form" class="occurrence-form">
-    <label>Occurs exactly<input name="count" id="occurrence-count" type="number" min="1" max="4294967295" step="1" required value="${query.count}"></label>
-    <label>Phrase length<select name="mode" id="occurrence-mode"><option value="exact"${!query.upTo ? " selected" : ""}>Exactly</option><option value="upTo"${query.upTo ? " selected" : ""}>Up to</option></select></label>
-    <label>Words (1–32)<input name="words" id="occurrence-words" type="number" min="1" max="32" step="1" required value="${query.words}"></label>
-    ${filters.map(optionalFilter).join("")}
-    <div class="book-scope"><label class="checkbox"><input type="checkbox" id="choose-books" name="chooseBooks"${query.includedBooks != null ? " checked" : ""}> Search selected books</label>
+    <fieldset class="filter-section"><legend>Frequency and phrase size</legend><div class="filter-grid">
+      <div class="filter-card"><h3>Occurrence count</h3><p id="occurrence-count-help">Total appearances in the books being searched. Up to includes counts from 1 through your limit.</p><div class="filter-controls">
+        <label>Match<select name="countMode" id="occurrence-count-mode" aria-label="Occurrence count: comparison"><option value="exact"${!query.countUpTo ? " selected" : ""}>Exactly</option><option value="upTo"${query.countUpTo ? " selected" : ""}>Up to</option></select></label>
+        <label>Appearances<input name="count" id="occurrence-count" aria-describedby="occurrence-count-help" type="number" min="1" max="4294967295" step="1" required value="${query.count}"></label>
+      </div></div>
+      <div class="filter-card"><h3>Phrase length</h3><p id="occurrence-words-help">Words per phrase. Any number searches all supported lengths (1–32). Exactly 2 finds pairs; up to 2 also includes single words.</p><div class="filter-controls">
+        <label>Match<select name="mode" id="occurrence-mode" data-controls="occurrence-words" data-hide-input aria-label="Phrase length: comparison"><option value="any"${query.anyLength ? " selected" : ""}>Any number</option><option value="exact"${!query.anyLength && !query.upTo ? " selected" : ""}>Exactly</option><option value="upTo"${!query.anyLength && query.upTo ? " selected" : ""}>Up to</option></select></label>
+        <label${query.anyLength ? " hidden" : ""}>Words (1–32)<input name="words" id="occurrence-words" aria-describedby="occurrence-words-help" type="number" min="1" max="32" step="1" required value="${query.words}"${query.anyLength ? " disabled" : ""}></label>
+      </div></div>
+      ${optionalFilter(filters[1])}
+    </div></fieldset>
+    <fieldset class="filter-section"><legend>Books to search</legend>
+    <p class="filter-section-help">Search the whole Bible, or select books to count appearances only within those books.</p>
+    <div class="book-scope"><label class="checkbox"><input type="checkbox" id="choose-books" name="chooseBooks"${query.includedBooks != null ? " checked" : ""}> Limit search to selected books</label>
     <fieldset id="included-books"${query.includedBooks == null ? " disabled hidden" : ""}><legend>Include these books</legend><div class="book-checkboxes">${state.books.map((book) => `<label class="checkbox"><input type="checkbox" name="includedBooks" value="${escape(book.name)}"${query.includedBooks?.includes(book.name) ? " checked" : ""}>${escape(book.name)}</label>`).join("")}</div></fieldset></div>
-    <button class="primary" type="submit">Find &amp; save →</button>
+    <div class="filter-grid">${optionalFilter(filters[0])}</div></fieldset>
+    <fieldset class="filter-section"><legend>Where it appears <span>(optional)</span></legend>
+      <p class="filter-section-help">Leave these on Any number for no restriction. Each condition can be satisfied in a different location.</p>
+      <div class="filter-grid">${filters.slice(2).map(optionalFilter).join("")}</div>
+    </fieldset>
+    <div class="occurrence-submit"><button class="primary" type="submit">Find words &amp; phrases →</button></div>
   </form>
-  <p class="counting-note">When selected books are enabled, all counts and positional filters apply only within those books. Choose at least one book. Counts every appearance, including repeats in a verse. Books means distinct Bible books; letters exclude spaces, punctuation, and digits. Verse runs stay within a chapter; chapter runs stay within a book. A run must contain the phrase in every verse or chapter. Runs mean at least the selected length. Chapter frequency requires at least one chapter with exactly the selected count. Each filter can be satisfied in a different location.</p>
-  <p class="counting-note">Case and punctuation are ignored; phrases stay within a verse. Results are ordered by word length, book count, letter count, then alphabetically. Choose a result to view its verses.</p>
-  ${results(state)}
+  <p class="counting-note">Counts include repeated appearances in a verse. Case and punctuation are ignored; phrases stay within a verse. Results are ordered by word length, occurrence count, book count, letter count, then alphabetically. Choose a result to view its verses.</p>
+  </section><section class="occurrence-results-pane" aria-labelledby="occurrence-results-heading"><h2 id="occurrence-results-heading">Results</h2>${results(state)}</section></div>
 </section>`;
 };

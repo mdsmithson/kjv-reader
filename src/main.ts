@@ -74,12 +74,27 @@ const phraseCounts = async (book: string, token: number) => {
       if (
         token !== countRequest ||
         state.statisticsBook !== book ||
-        !["books", "book-words", "book-phrases"].includes(state.page)
+        ![
+          "books",
+          "book-words",
+          "book-phrases",
+          "book-chapter",
+          "chapter-words",
+        ].includes(state.page)
       )
         return;
       const count = await api.exclusiveCount(book, length);
       if (token !== countRequest || state.statisticsBook !== book) return;
-      if (!["books", "book-words", "book-phrases"].includes(state.page)) return;
+      if (
+        ![
+          "books",
+          "book-words",
+          "book-phrases",
+          "book-chapter",
+          "chapter-words",
+        ].includes(state.page)
+      )
+        return;
       dispatch({ type: "phrase-count", length, count });
     }
   } catch (error) {
@@ -114,7 +129,7 @@ const occurrences = async (query: OccurrenceQuery) => {
     (results) => ({ type: "occurrences", results }),
   );
   if (loaded && state.page === "occurrences")
-    root.querySelector("main")?.scrollTo({ top: 0 });
+    root.querySelector(".occurrence-results-pane")?.scrollTo({ top: 0 });
 };
 
 root.addEventListener("click", (event) => {
@@ -130,6 +145,14 @@ root.addEventListener("click", (event) => {
     if (state.page === "books") void statistics(state.statisticsBook);
     if (state.page === "search")
       root.querySelector<HTMLInputElement>("#query")?.focus();
+    return;
+  }
+  if (button.dataset.statisticsChapter) {
+    dispatch({
+      type: "statistics-chapter",
+      chapter: Number(button.dataset.statisticsChapter),
+    });
+    root.querySelector("main")?.scrollTo({ top: 0 });
     return;
   }
   if (button.dataset.phraseLength) {
@@ -174,6 +197,11 @@ root.addEventListener("click", (event) => {
             (button.dataset.action === "phrase-next" ? pageSize : -pageSize),
         ),
       );
+      break;
+    case "chapter-exclusive-words":
+      dispatch({ type: "exclusive-offset", offset: 0 });
+      dispatch({ type: "page", page: "chapter-words" });
+      root.querySelector("main")?.scrollTo({ top: 0 });
       break;
     case "exclusive-words":
       dispatch({ type: "exclusive-offset", offset: 0 });
@@ -269,7 +297,12 @@ root.addEventListener("submit", (event) => {
     }
     void occurrences({
       count: Number(data.get("count")),
-      words: Number(data.get("words")),
+      countUpTo: data.get("countMode") === "upTo",
+      words:
+        Number(
+          form.querySelector<HTMLInputElement>("#occurrence-words")?.value,
+        ) || state.occurrenceQuery.words,
+      anyLength: data.get("mode") === "any",
       upTo: data.get("mode") === "upTo",
       books: data.get("bookMode") === "any" ? null : Number(data.get("books")),
       booksUpTo: data.get("bookMode") === "upTo",

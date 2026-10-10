@@ -12,6 +12,12 @@ export const syncOptionalControls = (form: HTMLFormElement): void => {
       const target = form.querySelector<HTMLInputElement>(
         `#${mode.dataset.controls}`,
       );
-      if (target) target.disabled = mode.value === "any";
+      if (target) {
+        target.disabled = mode.value === "any";
+        if (mode.dataset.hideInput !== undefined) {
+          const label = target.closest("label");
+          if (label) label.hidden = target.disabled;
+        }
+      }
     });
 };

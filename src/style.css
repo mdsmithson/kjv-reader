@@ -24,19 +24,90 @@ label:has(input:disabled) {
   color: #8e8372;
 }
 .occurrence-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 16px;
+  display: grid;
+  gap: 24px;
 }
 .occurrence-form input {
   padding: 10px 12px;
   background: #fcfaf5;
-  width: 120px;
+  width: 100%;
+  min-width: 0;
   font-size: 14px;
 }
-.occurrence-form .primary {
-  margin-left: auto;
+.filter-section {
+  min-width: 0;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #d9cfbe;
+  border-radius: 10px;
+}
+.filter-section > legend {
+  padding: 0 8px;
+  color: #653a32;
+  font-size: 16px;
+  font-weight: 600;
+}
+.filter-section > legend span {
+  color: #766750;
+  font-size: 13px;
+  font-weight: 400;
+}
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 16px;
+}
+.filter-card {
+  min-width: 0;
+  padding: 16px;
+  background: #f5f0e7;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.filter-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: #4f3d2b;
+}
+.filter-card p,
+.filter-section-help {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #766750;
+}
+.filter-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: auto;
+}
+.filter-controls label {
+  min-width: 0;
+}
+.filter-controls select {
+  width: 100%;
+  min-width: 0;
+}
+.occurrence-submit {
+  display: flex;
+  justify-content: flex-end;
+}
+.occurrence-form .book-scope {
+  margin-bottom: 20px;
+}
+.occurrence-form input:disabled {
+  background: #e9e5dd;
+  color: #a5a094;
+}
+@media (max-width: 600px) {
+  .filter-section {
+    padding: 12px;
+  }
+  .occurrence-submit .primary {
+    width: 100%;
+  }
 }
 .counting-note {
   color: #88765c;
@@ -632,4 +703,124 @@ h1 {
 .exclusive-phrases-page .exclusive-frequency {
   float: none;
   flex-shrink: 0;
+}
+
+/* Two independently scrolling pages keep settings beside the results. */
+.layout:has(.occurrence-page) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.layout:has(.occurrence-page) > aside {
+  overflow-y: auto;
+}
+main:has(.occurrence-page) {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+main:has(.occurrence-page) > header {
+  flex-shrink: 0;
+}
+.search-page.occurrence-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 1700px;
+  padding: 24px;
+}
+.occurrence-page > h1 {
+  margin: 8px 0;
+  font-size: 30px;
+}
+.occurrence-page > .intro {
+  margin: 0 0 20px;
+}
+.occurrence-workspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 360px) minmax(0, 1fr);
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+.occurrence-parameters-pane,
+.occurrence-results-pane {
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px;
+  background: #fcfaf5;
+  border: 1px solid #d9cfbe;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px #382b2b08;
+}
+.occurrence-workspace h2 {
+  margin: 0 0 20px;
+  font-size: 19px;
+  font-family: Georgia, serif;
+}
+.occurrence-parameters-pane .filter-section {
+  padding: 12px;
+}
+.occurrence-parameters-pane .filter-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.occurrence-parameters-pane .filter-card {
+  padding: 12px;
+}
+.occurrence-parameters-pane .filter-section > legend {
+  font-size: 14px;
+}
+.occurrence-parameters-pane .occurrence-submit {
+  position: sticky;
+  bottom: -20px;
+  padding: 12px 0;
+  background: #fcfaf5;
+}
+.occurrence-submit .primary {
+  width: 100%;
+}
+.filter-controls label[hidden] {
+  display: none;
+}
+.filter-controls:has(label[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.occurrence-results-pane .cache-status {
+  margin-top: 0;
+}
+.occurrence-results-pane .result-summary {
+  margin-top: 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.occurrence-results-pane .occurrence-result {
+  grid-template-columns: repeat(4, minmax(0, auto));
+  gap: 8px 14px;
+}
+.occurrence-results-pane .occurrence-result > .scripture {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.occurrence-results-pane .chapter-navigation {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+@media (max-width: 1050px) {
+  main:has(.occurrence-page) {
+    display: block;
+    overflow-y: auto;
+  }
+  .occurrence-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .occurrence-parameters-pane,
+  .occurrence-results-pane {
+    overflow-y: visible;
+  }
+  .occurrence-parameters-pane .occurrence-submit {
+    position: static;
+  }
 }

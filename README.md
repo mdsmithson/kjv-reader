@@ -35,7 +35,7 @@ after installing that platform's prerequisites.
 - Search the whole Bible or one book, with all words or an exact phrase.
 - Case-insensitive search with 50 results per page and a total count.
 - Highlight matching words or phrases inside search results.
-- Find words and phrases occurring exactly a chosen number of times.
+- Find words and phrases occurring exactly a chosen number of times or up to that count.
 - Limit phrase length to exactly N words or up to N words (1–32).
 - Filter those phrases to exactly N distinct Bible books or up to N books (1–66).
 - Filter by exactly or up to N letters across the whole word or phrase.
@@ -54,11 +54,21 @@ change the supplied KJV spelling into the spelling of the 1611 edition.
 
 ## Occurrence search
 
-Open **Occurrences** in the sidebar. For example, set **Occurs exactly: 7**,
-**Phrase length: Exactly**, **Words: 2**, **In books: Exactly**, **Books: 3**.
+Open **Occurrences** in the sidebar. For example, set **Occurrence count: Exactly 7**,
+**Phrase length: Exactly**, **Words: 2**, **Number of books: Exactly**, **Books: 3**.
 This returns two-word phrases with seven appearances across exactly three
 distinct Bible books. Set either length/book selector to **Up to** for a maximum
 instead, or choose **Any number** to ignore the distinct-book filter.
+
+Set **Occurrence count** to **Up to** to include every positive count through
+the chosen limit (for example, 1–7 appearances). Frequency and phrase size,
+books to search, and optional location filters are grouped separately; each
+comparison sits beside its numeric value with an explanation.
+
+**Phrase length: Any number** searches all supported lengths, 1–32 words, and
+hides the numeric entry. Switching back to **Exactly** or **Up to** restores the
+previous value. On wide windows, search settings and results appear as two pages
+side by side, each with its own scroll area. Narrow windows stack the pages.
 
 The **Letters in phrase** selector also supports **Exactly**, **Up to**, or
 **Any number**. For example: **7 occurrences · exactly 2 words · exactly 3 books ·
@@ -76,7 +86,7 @@ numbers in one book, with the phrase in at least one verse of every chapter.
 Missing chapters and book boundaries reset chapter runs. A longer run also
 satisfies a shorter requested length.
 
-**Chapter frequency** requires at least one chapter containing exactly N
+**Occurrences in one chapter** requires at least one chapter containing exactly N
 appearances, including repeats within a verse. It checks individual chapter
 counts, not the maximum chapter count. Filters combine with AND, but different
 filters may be satisfied at different locations in the Bible. Results display
@@ -163,8 +173,11 @@ distinct-book count, letter count, and token IDs. Alphabetically sorted word IDs
 deterministic phrase order. Two binary searches find the selected count/book range
 in O(log U) record reads. A letter filter selects one contiguous letter range
 per eligible book-count group, requiring O(B log U) reads for at most
-B = min(66, requested frequency) groups. No candidate scan or Bible recount is
-needed. The service reads only the requested page, without
+B = min(66, requested frequency) groups for an exact occurrence count. An **Up to**
+occurrence count uses one contiguous frequency range. Combined book/letter filters
+scan that range's record metadata once and save matching positions, reusing the
+same selection mechanism as location filters. Subsequent pages reuse that selection
+without scanning or recounting the Bible. The service reads only the requested page, without
 deserializing a full index or constructing all matching phrase strings. **Up to**
 length requests query the relevant per-length files and page across their ranges.
 
@@ -252,6 +265,14 @@ in the Bible. Ties appear alphabetically; no stop words are removed. All statist
 use the same case-insensitive tokenizer as occurrence search. One corpus pass
 builds word counts and book ownership at startup, and subsequent requests use
 these immutable statistics.
+
+The **Chapters** section opens a statistics page for every chapter in the selected
+book. Each page shows total words, distinct words, and distinct words found only
+in that chapter across the entire Bible, including comparison with other chapters
+of the same book. Chapter statistics share the book statistics' tokenizer and are
+computed at startup. Choose another chapter or open its text with **Read**.
+Click **Words only found in this chapter** to see each word and its appearance
+count, ordered by count descending with alphabetical ties and 50 words per page.
 
 Enable **Search selected books** in Occurrences to choose one or more books.
 Every frequency, distinct-book count, and positional filter is evaluated within

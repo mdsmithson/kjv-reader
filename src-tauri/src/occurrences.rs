@@ -22,6 +22,8 @@ const PAGE_SIZE: usize = crate::bible::PAGE_SIZE;
 #[serde(rename_all = "camelCase")]
 pub struct OccurrenceQuery {
     pub count: u32,
+    #[serde(default)]
+    pub count_up_to: bool,
     pub words: u16,
     pub up_to: bool,
     pub offset: usize,
@@ -173,6 +175,10 @@ impl Record {
     }
 
     fn matches(&self, file: &mut File, query: &OccurrenceQuery) -> io::Result<bool> {
+        if query.books.is_some_and(|books| if query.books_up_to { self.books > books } else { self.books != books })
+            || query.letters.is_some_and(|letters| if query.letters_up_to { self.letters > letters } else { self.letters != letters }) {
+            return Ok(false);
+        }
         if query.consecutive_verses.is_some_and(|minimum| self.max_verse_run < minimum)
             || query.consecutive_chapters.is_some_and(|minimum| self.max_chapter_run < minimum) {
             return Ok(false);
@@ -358,7 +364,8 @@ impl OccurrenceIndex {
     }
 
     fn selection(&self, file: &mut File, records: u64, length: u16, query: &OccurrenceQuery, ranges: Vec<(u64, u64)>) -> io::Result<(Selection, bool)> {
-        if query.consecutive_verses.is_none() && query.consecutive_chapters.is_none() && query.chapter_frequency.is_none() {
+        if query.consecutive_verses.is_none() && query.consecutive_chapters.is_none() && query.chapter_frequency.is_none()
+            && !(query.count_up_to && (query.books.is_some() || query.letters.is_some())) {
             return Ok((Selection::Ranges(ranges), false));
         }
         let key = OccurrenceQuery { offset: 0, words: length, up_to: false, ..query.clone() };
@@ -496,6 +503,9 @@ type IndexKey = (u64, u32, u64);
 
 fn query_ranges(query: &OccurrenceQuery) -> Vec<(IndexKey, IndexKey)> {
     let count = u64::from(query.count);
+    // A single range bounds every positive frequency through the requested maximum.
+    // Book/letter restrictions within this range use cached metadata selections.
+    if query.count_up_to { return vec![((1, 0, 0), (count + 1, 0, 0))]; }
     match query.letters {
         Some(letters) => {
             let requested_maximum = query.books.unwrap_or(66);
@@ -536,6 +546,78 @@ fn lower_bound(file: &mut File, length: u16, records: u64, target: IndexKey) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_supported_lengths_include_every_phrase_and_reuse_indices() {
+        let index = OccurrenceIndex::new([("Genesis", "a b c d")].into_iter(), &cache_root());
+        let request = query(1, MAX_WORDS, true, 0);
+        let page = index.search(&request).unwrap();
+        assert_eq!(page.total, 10);
+        assert_eq!(page.entries.iter().map(|entry| entry.words).collect::<HashSet<_>>(), HashSet::from([1, 2, 3, 4]));
+        let reused = index.search(&request).unwrap();
+        assert!(reused.built_lengths.is_empty());
+        assert_eq!(page.entries, reused.entries);
+    }
+
+    #[test]
+    fn up_to_counts_combine_with_all_filters_and_selected_books() {
+        let passages = [("Genesis", 1, 1, "a a bb bb ccc"), ("Genesis", 1, 2, "a bb dddd"), ("Genesis", 2, 1, "a ccc"), ("Exodus", 1, 1, "a bb eeeee")];
+        let root = cache_root();
+        let index = OccurrenceIndex::from_passages(passages.into_iter(), &root);
+        for up_to in [false, true] {
+            for (books, books_up_to) in [(None, false), (Some(1), false), (Some(2), false), (Some(2), true)] {
+                for (letters, letters_up_to) in [(None, false), (Some(2), false), (Some(4), true), (Some(0), true)] {
+                    for spatial in [false, true] {
+                        for included_books in [None, Some(vec!["Genesis".into()])] {
+                            let request = OccurrenceQuery {
+                                count_up_to: true, books, books_up_to, letters, letters_up_to,
+                                consecutive_verses: spatial.then_some(2),
+                                consecutive_chapters: spatial.then_some(2),
+                                chapter_frequency: spatial.then_some(3), included_books,
+                                ..query(3, 2, up_to, 0)
+                            };
+                            let mut expected = Vec::new();
+                            for count in 1..=3 {
+                                expected.extend(index.search(&OccurrenceQuery { count, count_up_to: false, ..request.clone() }).unwrap().entries);
+                            }
+                            expected.sort_by(|a, b| (a.words, a.count, a.books, a.letters, &a.phrase).cmp(&(b.words, b.count, b.books, b.letters, &b.phrase)));
+                            let page = index.search(&request).unwrap();
+                            assert_eq!(page.total, expected.len());
+                            assert_eq!(page.entries, expected);
+                            let reused = index.search(&request).unwrap();
+                            assert!(!reused.built_filters);
+                            assert_eq!(reused.entries, expected);
+                        }
+                    }
+                }
+            }
+        }
+        let request = OccurrenceQuery { count_up_to: true, books: Some(1), letters: Some(4), letters_up_to: true, ..query(3, 1, false, 0) };
+        let restarted = OccurrenceIndex::from_passages(passages.into_iter(), &root);
+        assert_eq!(restarted.search(&request).unwrap().entries, index.search(&request).unwrap().entries);
+    }
+
+    #[test]
+    fn up_to_count_pages_and_maximum_do_not_skip_or_duplicate_matches() {
+        let line = (0..120).map(|number| {
+            let word = format!("word{number}");
+            if number % 2 == 0 { format!("{word} {word}") } else { word }
+        }).collect::<Vec<_>>().join(" ");
+        let index = OccurrenceIndex::new([("Genesis", line.as_str())].into_iter(), &cache_root());
+        let request = OccurrenceQuery { count_up_to: true, ..query(u32::MAX, 1, false, 0) };
+        let mut all = Vec::new();
+        for offset in [0, 50, 100] {
+            let page = index.search(&OccurrenceQuery { offset, ..request.clone() }).unwrap();
+            assert_eq!(page.total, 120);
+            all.extend(page.entries);
+        }
+        assert_eq!(all.len(), 120);
+        assert_eq!(all.iter().map(|entry| &entry.phrase).collect::<HashSet<_>>().len(), 120);
+        assert!(all[..60].iter().all(|entry| entry.count == 1));
+        assert!(all[60..].iter().all(|entry| entry.count == 2));
+        assert_eq!(index.search(&OccurrenceQuery { count: 1, ..request.clone() }).unwrap().total, 60);
+        assert!(index.search(&OccurrenceQuery { count: 0, ..request }).is_err());
+    }
 
     #[test]
     fn selected_books_recount_all_filters_and_reuse_across_order_and_restart() {
@@ -702,7 +784,7 @@ mod tests {
     }
 
     fn query(count: u32, words: u16, up_to: bool, offset: usize) -> OccurrenceQuery {
-        OccurrenceQuery { count, words, up_to, offset, books: None, books_up_to: false, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None }
+        OccurrenceQuery { count, count_up_to: false, words, up_to, offset, books: None, books_up_to: false, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None }
     }
 
     #[test]

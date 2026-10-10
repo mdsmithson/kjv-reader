@@ -12,7 +12,7 @@ fn main() {
     let started = Instant::now();
     let index = OccurrenceIndex::from_passages(bible.located_passages(), &cache);
     println!("Tokenize and intern corpus: {:?}", started.elapsed());
-    let query = OccurrenceQuery { count: 7, words: 2, up_to: true, offset: 0, books: None, books_up_to: false, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None };
+    let query = OccurrenceQuery { count: 7, count_up_to: false, words: 2, up_to: true, offset: 0, books: None, books_up_to: false, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None };
     for (name, request) in [
         ("First request", OccurrenceQuery { ..query.clone() }),
         ("Repeated request", OccurrenceQuery { ..query.clone() }),

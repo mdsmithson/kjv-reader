@@ -30,25 +30,59 @@ export const booksView = (state: State): string => {
     </dl>`
           : ""
     }
+    ${stats ? `<section class="book-chapters"><h2>Chapters</h2><p class="intro">Explore word counts for each chapter of ${escape(stats.name)}.</p>${chapterButtons(state)}</section>` : ""}
     ${stats ? phraseButtons(state) : ""}
     <p class="counting-note">Words are counted without regard to case. Punctuation separates words; internal apostrophes stay in the word. Common words include every word, including “the” and “and”. Exclusive words occur nowhere in the other books. All ties are shown alphabetically.</p>
   </section>`;
 };
 
+const chapterButtons = (state: State) =>
+  `<div class="book-list" aria-label="Choose a chapter">${(state.statistics?.chapters ?? []).map((chapter) => `<button data-statistics-chapter="${chapter.chapter}" aria-pressed="${state.page === "book-chapter" && state.statisticsChapter === chapter.chapter}">Chapter ${chapter.chapter}</button>`).join("")}</div>`;
+
+export const chapterStatisticsView = (state: State): string => {
+  const stats = state.statistics?.chapters.find(
+    (chapter) => chapter.chapter === state.statisticsChapter,
+  );
+  return `<section class="search-page chapter-statistics-page">
+    <button data-page="books">← Back to ${escape(state.statisticsBook)}</button>
+    <div class="eyebrow">${escape(state.statisticsBook)}</div><h1>Chapter ${state.statisticsChapter}</h1>
+    ${chapterButtons(state)}
+    ${
+      stats
+        ? `<dl class="book-statistics">
+      <div><dt>Words in chapter</dt><dd>${stats.words.toLocaleString()}</dd></div>
+      <div><dt>Unique words in chapter</dt><dd>${stats.uniqueWords.toLocaleString()}</dd></div>
+      <div><dt>Words only found in this chapter</dt><dd><button class="exclusive-count" data-action="chapter-exclusive-words" aria-label="List all ${stats.exclusiveWords.length} words only found in ${escape(state.statisticsBook)} ${stats.chapter}">${stats.exclusiveWords.length.toLocaleString()} words <span aria-hidden="true">→</span></button></dd></div>
+    </dl>
+    <p class="counting-note">Words are counted without regard to case. Punctuation separates words; internal apostrophes stay in the word. Unique words count each distinct word once. Words only found in this chapter are distinct words that occur nowhere else in the entire Bible, including other chapters of ${escape(state.statisticsBook)}.</p>
+    <button data-book="${escape(state.statisticsBook)}" data-chapter="${stats.chapter}">Read ${escape(state.statisticsBook)} ${stats.chapter} →</button>`
+        : '<p class="notice">Chapter statistics are unavailable.</p>'
+    }
+  </section>`;
+};
+
 export const exclusiveWordsView = (state: State): string => {
-  const words = state.statistics?.exclusiveWords ?? [];
+  const isChapter = state.page === "chapter-words";
+  const scope = isChapter ? "chapter" : "book";
+  const label = `${state.statisticsBook}${isChapter ? ` ${state.statisticsChapter}` : ""}`;
+  const words =
+    (isChapter
+      ? state.statistics?.chapters.find(
+          (chapter) => chapter.chapter === state.statisticsChapter,
+        )?.exclusiveWords
+      : state.statistics?.exclusiveWords) ?? [];
   const offset = state.exclusiveOffset;
   const entries = words.slice(offset, offset + pageSize);
   return `<section class="search-page exclusive-words-page">
-    <button data-page="books">← Back to ${escape(state.statisticsBook)}</button>
-    <div class="eyebrow">${escape(state.statisticsBook)}</div><h1>Words only found in this book</h1>
+    <button data-page="${isChapter ? "book-chapter" : "books"}">← Back to ${escape(label)}</button>
+    <div class="eyebrow">${escape(label)}</div><h1>Words only found in this ${scope}</h1>
     <p class="intro">${words.length.toLocaleString()} distinct words, ordered from most common to least common. Ties are alphabetical.</p>
     ${
       words.length
-        ? `<div class="result-summary"><strong>Word · Appearances in ${escape(state.statisticsBook)}</strong><span>${offset + 1}–${offset + entries.length} of ${words.length.toLocaleString()}</span></div>
+        ? `<div class="result-summary"><strong>Word · Appearances in ${escape(label)}</strong><span>${offset + 1}–${offset + entries.length} of ${words.length.toLocaleString()}</span></div>
       <ol class="exclusive-word-list" start="${offset + 1}">${entries.map((entry) => `<li><span class="scripture">${escape(entry.word)}</span><span class="exclusive-frequency">${entry.count.toLocaleString()}</span></li>`).join("")}</ol>
       <div class="chapter-navigation"><button data-action="exclusive-previous"${offset === 0 ? " disabled" : ""}>← Previous words</button><span>Page ${Math.floor(offset / pageSize) + 1}</span><button data-action="exclusive-next"${offset + pageSize >= words.length ? " disabled" : ""}>Next words →</button></div>`
-        : '<p class="notice">No words are exclusive to this book.</p>'
+        : `<p class="notice">No words are exclusive to this ${scope}.</p>`
     }
   </section>`;
 };

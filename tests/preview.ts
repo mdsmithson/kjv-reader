@@ -15,6 +15,14 @@ const tokenLines = verses.map((verse) => ({
   book: verse.book,
   tokens: tokenize(verse.text),
 }));
+const chapterWordOwners = new Map<string, Set<string>>();
+for (const verse of verses) {
+  for (const word of tokenize(verse.text)) {
+    const owners = chapterWordOwners.get(word) ?? new Set<string>();
+    owners.add(`${verse.book} ${verse.chapter}`);
+    chapterWordOwners.set(word, owners);
+  }
+}
 const exclusiveCache = new Map<string, { phrase: string; count: number }[]>();
 // Preview-only in-memory transport; persistent indexing is exercised in Rust.
 const saved = new Map<
@@ -88,6 +96,28 @@ window.__TAURI__ = {
         };
         return {
           name: args?.book,
+          chapters: [...new Set(lines.map((verse) => verse.chapter))]
+            .sort((a, b) => a - b)
+            .map((chapter) => {
+              const tokens = lines
+                .filter((verse) => verse.chapter === chapter)
+                .flatMap((verse) => tokenize(verse.text));
+              const unique = new Set(tokens);
+              return {
+                chapter,
+                words: tokens.length,
+                uniqueWords: unique.size,
+                exclusiveWords: [...unique]
+                  .filter((word) => chapterWordOwners.get(word)!.size === 1)
+                  .map((word) => ({
+                    word,
+                    count: tokens.filter((token) => token === word).length,
+                  }))
+                  .sort(
+                    (a, b) => b.count - a.count || a.word.localeCompare(b.word),
+                  ),
+              };
+            }),
           words: [...counts.values()].reduce((a, b) => a + b, 0),
           uniqueWords: counts.size,
           verses: lines.length,
@@ -189,7 +219,9 @@ window.__TAURI__ = {
           return [...saved.get(scopeKey(length))!]
             .filter(
               ([phrase, frequency]) =>
-                frequency.count === query.count &&
+                (query.countUpTo
+                  ? frequency.count <= query.count
+                  : frequency.count === query.count) &&
                 (query.books == null ||
                   (query.booksUpTo
                     ? frequency.books.size <= query.books
@@ -218,6 +250,7 @@ window.__TAURI__ = {
             )
             .sort(
               (left, right) =>
+                left.count - right.count ||
                 left.books - right.books ||
                 left.letters - right.letters ||
                 (left.phrase < right.phrase

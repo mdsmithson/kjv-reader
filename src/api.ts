@@ -1,3 +1,4 @@
+import { maxPhraseWords } from "./model";
 import type {
   Book,
   ExclusivePhrasePage,
@@ -38,7 +39,13 @@ export const chapter = (location: Location) =>
   });
 export const search = (query: Query) => invoke<SearchPage>("search", { query });
 export const occurrences = (query: OccurrenceQuery) =>
-  invoke<OccurrencePage>("occurrences", { query });
+  invoke<OccurrencePage>("occurrences", {
+    query: {
+      ...query,
+      words: query.anyLength ? maxPhraseWords : query.words,
+      upTo: query.anyLength || query.upTo,
+    },
+  });
 
 export const bookStats = (book: string) =>
   invoke<BookStats>("book_stats", { book });
