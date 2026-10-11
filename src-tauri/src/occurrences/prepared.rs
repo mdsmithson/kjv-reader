@@ -2,14 +2,16 @@
 use super::*;
 mod verses;
 mod search;
+mod visibility;
 use crate::{bible::Bible, phrase_stats::PhraseDetail};
 use catalogue::{PhraseFilters, SavedPhrase, SavedPhrasePage};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::io::BufReader;
-pub use verses::{PreparedVerses, VerseDetail, VersePage, VerseWord, VerseFilters};
+pub use verses::{VerseFrequencyQuery, VerseFrequencySort, PreparedVerses, VerseDetail, VersePage, VerseWord, VerseFilters};
 
 const FORMAT: u32 = 1;
+const MAX_PREPARED_WORDS:u16=90;
 const RECORD_SIZE: u64 = 32;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Group {
@@ -109,8 +111,8 @@ pub struct PreparedPhrases {
     manifest: Manifest,
     dictionary: Vec<String>,
     tokens: Vec<u32>,
-    ids: Vec<u32>,
     children: Vec<u32>,
+    visible: visibility::VisibleCatalogue,
     search_spans: Vec<u32>,
     search_cache: Mutex<Vec<(String, Arc<Vec<u32>>)>>,
     contents_cache: Mutex<HashMap<String, PhraseContents>>,
@@ -123,7 +125,7 @@ impl PreparedPhrases {
         let manifest: Manifest = read_json(&root.join("manifest.json"))?;
         if manifest.format != FORMAT
             || manifest.fingerprint != fingerprint(bible)
-            || !(2..=MAX_WORDS).contains(&manifest.maximum_words)
+            || !(2..=MAX_PREPARED_WORDS).contains(&manifest.maximum_words)
             || manifest.verses != bible.located_passages().count()
             || fs::metadata(root.join("phrases.bin"))?.len() != manifest.total as u64 * RECORD_SIZE
             || fs::metadata(root.join("postings.bin"))?.len() != manifest.postings * 4
@@ -134,6 +136,7 @@ impl PreparedPhrases {
         }
         let tokens = u32_file(&root.join("tokens.bin"))?;
         let ids = u32_file(&root.join("groups.bin"))?;
+        let visible = visibility::read(root, &manifest)?;
         let search_spans = search::read_spans(root, &manifest, &tokens)?;
         let children = u32_file(&root.join("phrase-children.bin"))?;
         let child_header: ChildrenHeader = read_json(&root.join("phrase-children.json"))?;
@@ -164,8 +167,8 @@ impl PreparedPhrases {
             manifest,
             dictionary,
             tokens,
-            ids,
             children,
+            visible,
             search_spans,
             search_cache: Mutex::new(Vec::new()),
             contents_cache: Mutex::new(HashMap::new()),
@@ -215,17 +218,17 @@ impl PreparedPhrases {
         let mut entries = Vec::new();
         let total;
         if unfiltered {
-            total = self.manifest.total;
-            for id in offset.min(total)..offset.saturating_add(PAGE_SIZE).min(total) {
-                entries.push(self.summary(self.record(&mut file, id)?)?);
+            total = self.visible.ids.len();
+            for &id in self.visible.ids.iter().skip(offset).take(PAGE_SIZE) {
+                entries.push(self.summary(self.record(&mut file, id as usize)?)?);
             }
         } else {
             let groups: Vec<&[u32]> = self
-                .manifest
+                .visible
                 .groups
                 .iter()
                 .filter(|g| g.matches(filters))
-                .map(|g| &self.ids[g.start..g.start + g.total])
+                .map(|g| &self.visible.group_ids[g.start..g.start + g.total])
                 .collect();
             total = groups.iter().map(|g| g.len()).sum();
             if offset < total {
@@ -472,6 +475,7 @@ impl PreparedPhrases {
             }
             let mut metadata = HashMap::new();
             for id in visited {
+                if !self.visible.mask[id as usize] { continue; }
                 let record = self.record(&mut file, id as usize)?;
                 metadata.insert(self.phrase_tokens(record)?, (id, record.occurrences));
             }
@@ -558,11 +562,12 @@ impl OccurrenceIndex {
     pub fn prepare_phrases(&self, destination: &Path, maximum_words: u16) -> Result<(), String> {
         self.prepare(destination, maximum_words)
             .and_then(|_| prepare_children(destination))
+            .and_then(|_| visibility::prepare(destination))
             .and_then(|_| search::prepare(destination))
             .map_err(|e| format!("Unable to prepare phrase data: {e}"))
     }
     fn prepare(&self, destination: &Path, maximum_words: u16) -> io::Result<()> {
-        if !(2..=MAX_WORDS).contains(&maximum_words) {
+        if !(2..=MAX_PREPARED_WORDS).contains(&maximum_words) {
             return Err(invalid("Invalid prepared phrase range"));
         }
         if let Ok(manifest) = read_json::<Manifest>(&destination.join("manifest.json")) {
@@ -761,13 +766,16 @@ impl OccurrenceIndex {
 mod tests {
     use super::*;
     fn root() -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+        let nonce=NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "kjv-prepared-{}-{}",
+            "kjv-prepared-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            nonce
         ))
     }
     #[test]
@@ -814,7 +822,8 @@ mod tests {
                 }
             }
         }
-        let all: Vec<_> = oracle.keys().cloned().collect();
+        let visible = visibility::oracle(&bible,4);
+        let all: Vec<_> = oracle.keys().filter(|phrase|visible.contains(*phrase)).cloned().collect();
         let actual: Vec<_> = (0..all.len())
             .step_by(PAGE_SIZE)
             .flat_map(|offset| {
@@ -886,7 +895,7 @@ mod tests {
             let expected: Vec<_> = oracle
                 .iter()
                 .filter(|(phrase, (count, books, _, length))| {
-                    filters.words.is_none_or(|v| v as usize == *length)
+                    visible.contains(*phrase) && filters.words.is_none_or(|v| v as usize == *length)
                         && filters.letters.is_none_or(|v| {
                             v as usize == phrase.chars().filter(|c| c.is_alphabetic()).count()
                         })
@@ -958,16 +967,10 @@ mod tests {
                     (phrase, details.occurrences)
                 })
                 .collect();
+            let globally_visible=visibility::oracle(&bible,32);
             let expected: Vec<_> = proper
                 .iter()
-                .filter(|(phrase, count)| {
-                    **count > 1
-                        || !proper.iter().any(|(parent, parent_count)| {
-                            *parent_count == 1
-                                && words(parent).len() > words(phrase).len()
-                                && format!(" {parent} ").contains(&format!(" {phrase} "))
-                        })
-                })
+                .filter(|(phrase,_)|globally_visible.contains(*phrase))
                 .map(|(phrase, _)| phrase.clone())
                 .collect();
             let contents = store.contents(text, &stats).unwrap();

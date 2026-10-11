@@ -340,8 +340,9 @@ a word detail page.
 
 ## Prebuilt offline data
 
-The release app ships **9,632,649 distinct phrases**, covering every supported
-length from **2 through 32 words**. Word counts, letter counts, total occurrences,
+The release app retains **182,550 phrases** after equal-count rollup, backed by
+10,179,800 internal analysis records covering every supported
+length from **2 through 90 words**. Word counts, letter counts, total occurrences,
 book counts, alphabetical order, filter indexes, and all matching verse locations
 are prepared before packaging. Opening a phrase page does not scan the Bible,
 recount phrases, sort the catalogue, create indexes, or copy the data pack.
@@ -381,7 +382,7 @@ These measure backend data reads, excluding UI rendering and installer extractio
 
 ## Phrases and presentation
 
-**Phrases** lists all phrases alphabetically, with words, letters, occurrences,
+**Phrases** lists retained phrases alphabetically, with words, letters, occurrences,
 and books. Click a header to enter an exact-count filter, then press Enter or
 **Filter phrases**. Filters combine, apply before pagination, and remain active
 when returning from a phrase page. Clear a field to remove its restriction.
@@ -404,7 +405,7 @@ phrase counts. Choose a book to narrow the list; paging returns 50 verses.
 Clicking a verse in the reader or catalogue opens its verse detail page.
 
 Each verse detail shows the original verse with clickable words linking to
-Word pages, the three counts, and its consecutive phrases of 2–32 words. Phrases appear alphabetically,
+Word pages, the three counts, and its consecutive phrases of 2–90 words. Phrases appear alphabetically,
 50 per page, with whole-Bible occurrence
 and book counts; phrase links open their existing detail pages. Repeated phrases
 appear once. A phrase that occurs once is hidden when a longer containing phrase
@@ -440,16 +441,16 @@ subphrases. Click **Word**, **Occurrences**, **Letters**, or **Books** to sort
 word lists. Clicking the same header again reverses ascending/descending order;
 the arrow and accessible column status indicate the current order. Sorting
 applies to the complete list before paging. Ties follow alphabetical phrase or
-word order in the same direction. The existing once-occurring phrase rollups
+word order in the same direction. The equal-count phrase rollups
 also apply among proper subphrases, and displayed labels retain punctuation
 and capitalization.
 
 The app ships `verse-order.bin`, containing both numeric sort orders for every
 verse's complete displayed phrase list, plus `phrase-children.bin` and its
 manifest. The latter stores two prefix/suffix references per phrase, a compact
-shared graph covering all 9,632,649 phrases. Proper subphrase lists follow saved
+shared graph covering all 10,179,800 analysis phrases. Proper subphrase lists follow saved
 references and read existing counts; they do not scan the Bible or count phrases.
-Their size is bounded by 32 words (at most 495 proper phrases). A bounded cache
+Saved phrase lengths cover complete verses (up to 90 words). A bounded cache
 reuses the last 16 phrase content responses while matching-verse pages change.
 Word metadata comes from the saved Words catalogue, and the small word and
 subphrase lists sort locally. These indexes add approximately 91 MB and are
@@ -491,8 +492,7 @@ On **Verses**, click the **Words**, **Letters**, or **Phrases** header to reveal
 an exact-count filter, then press Enter or **Filter verses**. Count filters
 combine with each other and the selected book, apply before pagination, and
 remain active when returning from a verse detail page. Clear a numeric field
-to remove its restriction. Phrases filter the original distinct-phrase count,
-before the detail page's once-occurring phrase rollups. Header controls remain
+to remove its restriction. Phrases filter the retained distinct-phrase count after equal-count rollup. Header controls remain
 available even when no verses match. The filters read precomputed verse summary
 numbers directly; no Bible scan or phrase enumeration is needed.
 
@@ -501,3 +501,11 @@ The Numbers section lists numeric profiles in ascending order. Each profile show
 Number profiles also show phrases with the exact whole-Bible occurrence count and verses with the exact letter count. Each list has independent pagination and links to its detail page. These lists use the bundled phrase indexes and saved verse summaries without recounting the Bible.
 
 Phrases search finds complete, consecutive words anywhere in a saved phrase, ignoring case and punctuation. An optional Partial match toggle searches parts of words. Text and count filters combine before pagination; the search index is prepared once and searches reuse cached matching phrase IDs.
+
+On Verses, Add filter adds up to five frequency columns. Each counts every appearance in a verse of words that occur exactly X times in the whole Bible, ignoring case. Click a new column heading for descending order, then again for ascending. Counts and full-catalogue sort orders are prepared once and bundled; book and count filters apply before pagination. Columns can be removed, and Restore Bible order returns to canonical ordering.
+
+Add filter on Verses also offers phrase frequency columns. X is the whole-Bible occurrence count; each verse cell counts distinct phrases of 2–90 words with that global count, after equal-count segments have been rolled into their longest containing phrase. Word and phrase columns share the five-column limit and can be sorted or removed independently. Phrase histograms and sort orders are prepared once from saved phrase postings.
+
+The persisted phrase catalogue omits a shorter phrase whenever a containing phrase has the same Bible-wide occurrence count. This applies to every count, including repeated phrases. The catalogue includes all verse-bounded phrase lengths, so rollups reach the true longest phrase instead of stopping at 32 words. Saved rollup indexes apply before searching, filtering, and pagination. Verse phrase totals and phrase-frequency columns use the same retained dataset, so counts agree with the displayed verse phrase list.
+
+Run `npm run prepare:data` before the UI integration tests or visual preview; they also verify the prepared verse and phrase-frequency totals. Existing complete indexes are reused.

@@ -93,3 +93,6 @@ pub fn reader_highlights(book:String,chapter:u16,verses:tauri::State<'_,crate::o
 pub fn number_list(offset:usize, statistics:tauri::State<'_,crate::number_stats::NumberStatistics>)->crate::number_stats::NumberPage { statistics.list(offset) }
 #[tauri::command]
 pub fn number_words(number:usize, offset:usize, statistics:tauri::State<'_,crate::number_stats::NumberStatistics>)->crate::word_stats::WordPage { statistics.words(number,offset) }
+
+#[tauri::command]
+pub fn verse_catalogue(query:crate::occurrences::prepared::VerseFrequencyQuery,verses:tauri::State<'_,crate::occurrences::prepared::PreparedVerses>)->Result<crate::occurrences::prepared::VersePage,String> {verses.frequency_page(&query)}

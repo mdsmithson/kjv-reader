@@ -794,8 +794,8 @@ mod tests {
 
     pub(super) fn cache_root() -> PathBuf {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../work/occurrence-tests")
+        std::env::temp_dir()
+            .join("kjv-occurrence-tests")
             .join(format!("{}-{nonce}", std::process::id()))
     }
 

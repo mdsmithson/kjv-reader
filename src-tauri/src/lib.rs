@@ -45,6 +45,7 @@ pub fn run() {
             commands::catalog,
             commands::reader_highlights,
             commands::verse_list,
+            commands::verse_catalogue,
             commands::verse_details,
             commands::word_list,
             commands::saved_phrases,

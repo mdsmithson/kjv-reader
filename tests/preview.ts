@@ -2,6 +2,7 @@ import { numberFixture } from "./number-fixture.mjs";
 import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
 // Development-only visual fixture. Not included in the production entry point.
 import source from "../src-tauri/data/kjv.json";
+import savedPhraseFrequencies from "../src-tauri/data/precomputed/verse-phrase-frequency.json";
 import type { Query, OccurrenceQuery } from "../src/model";
 import { exclusiveFixture } from "./exclusive-fixture.mjs";
 import { wordFixture } from "./word-fixture.mjs";
@@ -19,7 +20,12 @@ const tokenize = (text: string) =>
 const wordCatalogue = wordFixture(verses, tokenize);
 const numberCatalogue = numberFixture(wordCatalogue);
 const phraseCatalogue = phraseFixture(verses, tokenize, wordCatalogue);
-const verseCatalogue = verseFixture(verses, tokenize, wordCatalogue);
+const verseCatalogue = verseFixture(
+  verses,
+  tokenize,
+  wordCatalogue,
+  savedPhraseFrequencies.counts,
+);
 const tokenLines = verses.map((verse) => ({
   book: verse.book,
   tokens: tokenize(verse.text),
@@ -48,6 +54,20 @@ const saved = new Map<
     }
   >
 >();
+// A real repeated passage exercises full-length equal-count rollups in the preview.
+const rollupExample =
+  "band of iron and brass in the tender grass of the field and let it be";
+const rollupParent =
+  "in the earth even with a band of iron and brass in the tender grass of the field and let it be wet with the dew of heaven and let his portion be with the beasts";
+saved.set(
+  "[36,null]",
+  new Map(
+    [rollupExample, rollupParent, "band of iron and brass"].map((phrase) => [
+      phrase,
+      { count: 2, books: new Set(["Daniel"]), positions: new Map() },
+    ]),
+  ),
+);
 const letterCount = (text: string) =>
   (text.match(/\p{Alphabetic}/gu) ?? []).length;
 const chapterHighlights = readerHighlightFixture(
@@ -65,6 +85,10 @@ window.__TAURI__ = {
         return chapterHighlights(
           String(args?.book),
           Number(args?.chapter),
+        ) as T;
+      if (command === "verse_catalogue")
+        return verseCatalogue.catalogue(
+          args?.query as Record<string, unknown>,
         ) as T;
       if (command === "verse_list")
         return verseCatalogue.list(

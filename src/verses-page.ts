@@ -15,21 +15,43 @@ export const versesView = (state: State): string => {
     ["letters", "Letters"],
     ["phrases", "Phrases"],
   ] as const;
-  const headers = `<div class="verse-table-heading"><span>Verse</span>${fields.map(([field, label]) => `<button data-verse-filter="${field}" type="button" aria-expanded="${state.verseFilter === field || state.verseFilters[field] != null}">${label}${state.verseFilters[field] == null ? "" : ` = ${state.verseFilters[field]}`}</button>`).join("")}</div>`;
-  return `<section class="search-page verses-page"><div class="eyebrow">EXPLORE EVERY VERSE</div><h1>Verses</h1><p class="intro">Browse verses in Bible order. Choose a verse to explore its words and phrases.</p>
+  const columns = [
+    ...state.verseFrequencies.map((frequency, index) => ({
+      frequency,
+      index,
+      kind: "words" as const,
+      key: String(frequency),
+    })),
+    ...state.versePhraseFrequencies.map((frequency, index) => ({
+      frequency,
+      index,
+      kind: "phrases" as const,
+      key: `phrase:${frequency}`,
+    })),
+  ];
+  const frequencyLabel = (n: number, kind: "words" | "phrases") =>
+    `${kind === "words" ? "Words" : "Phrases"} occurring ${n.toLocaleString()} ${n === 1 ? "time" : "times"}`;
+  const headers = `<div class="verse-table-heading"><span>Verse</span>${fields.map(([field, label]) => `<button data-verse-filter="${field}" type="button" aria-expanded="${state.verseFilter === field || state.verseFilters[field] != null}">${label}${state.verseFilters[field] == null ? "" : ` = ${state.verseFilters[field]}`}</button>`).join("")}${columns
+    .map(({ frequency, kind, key }) => {
+      const active =
+        state.verseFrequencySort?.frequency === frequency &&
+        (state.verseFrequencySort.kind ?? "words") === kind;
+      const direction = active ? state.verseFrequencySort?.direction : null;
+      return `<div class="verse-frequency-heading" role="columnheader" aria-sort="${direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}"><button data-verse-frequency-sort="${key}" aria-label="Sort ${frequencyLabel(frequency, kind).toLowerCase()} ${direction === "desc" ? "ascending" : "descending"}">${frequencyLabel(frequency, kind)} ${direction === "asc" ? "↑" : direction === "desc" ? "↓" : "↕"}</button><button class="frequency-remove" data-verse-frequency-remove="${key}" aria-label="Remove ${frequencyLabel(frequency, kind).toLowerCase()} column"${state.busy ? " disabled" : ""}>Remove</button></div>`;
+    })
+    .join("")}</div>`;
+  return `<section class="search-page verses-page"><div class="eyebrow">EXPLORE EVERY VERSE</div><h1>Verses</h1><p class="intro">Browse verses in Bible order, or sort by the frequency columns you add. Choose a verse to explore its words and phrases.</p>
   <form id="verses-form"><label class="verse-book-filter">Within<select id="verses-book"><option value="">All books</option>${state.books.map((book) => `<option${book.name === state.verseBook ? " selected" : ""}>${escape(book.name)}</option>`).join("")}</select></label>
   <div class="word-count-filters">${fields.map(([field, label]) => `<label${state.verseFilter === field || state.verseFilters[field] != null ? "" : " hidden"}>Exactly this many ${label.toLowerCase()}<input id="verse-${field}-filter" name="${field}" type="number" min="${field === "words" ? 1 : 0}" step="1" placeholder="Any number" value="${state.verseFilters[field] ?? ""}"></label>`).join("")}<button class="primary" type="submit">Filter verses →</button></div></form>
-  <p class="counting-note">Click Words, Letters, or Phrases to enter an exact count, then press Enter or Filter verses. Combine counts with a book, or clear a field to remove its filter. Words include repetitions; letters exclude spaces, punctuation, and digits; phrases count all distinct consecutive phrases of 2–32 words.</p>
-  ${state.busy ? '<p role="status" class="notice">Opening verses…</p>' : page ? `<div class="result-summary" role="status"><strong>${page.total.toLocaleString()} verses</strong><span>${page.total ? state.verseOffset + 1 : 0}–${state.verseOffset + page.entries.length} of ${page.total.toLocaleString()}</span></div>` : ""}
-  ${headers}
-  ${
-    !state.busy && page
-      ? page.total
-        ? `<div class="verse-table">${page.entries.map((entry) => `<button class="verse-row" ${verseButton(entry.verse)}><span><strong>${escape(reference(entry.verse))}</strong><span class="scripture">${escape(entry.verse.text)}</span></span><span>${entry.words}</span><span>${entry.letters}</span><span>${entry.phrases.toLocaleString()}</span></button>`).join("")}</div>
-  <div class="chapter-navigation"><button data-action="verses-previous"${state.verseOffset === 0 ? " disabled" : ""}>← Previous verses</button><span>Page ${Math.floor(state.verseOffset / pageSize) + 1}</span><button data-action="verses-next"${state.verseOffset + pageSize >= page.total ? " disabled" : ""}>Next verses →</button></div>`
-        : '<p class="notice">No verses match these counts. Clear or change a filter to see more verses.</p>'
-      : ""
-  }</section>`;
+  <p class="counting-note">Click Words, Letters, or Phrases to enter an exact count, then press Enter or Filter verses. Combine counts with a book, or clear a field to remove its filter. Words include repetitions; letters exclude spaces, punctuation, and digits; phrases count distinct consecutive phrases of 2–90 words after rolling shorter segments into their longest parent with the same Bible-wide occurrence count.</p>
+  <div class="verse-column-controls"><button data-action="verse-add-filter" aria-expanded="${state.verseAddFilterOpen}"${columns.length >= 5 || state.busy ? " disabled" : ""}>Add filter</button><span>${columns.length} of 5 additional columns</span>${state.verseFrequencySort ? '<button data-action="verse-bible-order">Restore Bible order</button>' : ""}</div>
+  ${state.verseAddFilterOpen ? `<form id="verse-frequency-form"><label>Kind of filter<select id="verse-frequency-kind" aria-label="Kind of filter"><option value="words">Count of words that occur X times</option><option value="phrases">Count of phrases that occur X times</option></select></label><label>Occurrences across the Bible (X)<input id="verse-frequency-input" type="number" min="1" max="${Number.MAX_SAFE_INTEGER}" step="1" value="1" required aria-describedby="verse-frequency-help"></label><button type="submit" class="primary">Add</button><button type="button" data-action="verse-add-filter">Cancel</button></form>` : ""}
+  <p class="counting-note" id="verse-frequency-help">X is the total occurrence count across the whole Bible, ignoring case and punctuation. Word columns count appearances in the verse, including repetitions. Phrase columns count distinct consecutive phrases of 2–90 words in the verse, after rolling shorter segments into their longest parent with the same Bible-wide occurrence count. Click a column heading for descending order; click again for ascending order.</p>
+  ${page ? `<div class="result-summary" role="status"><strong>${page.total.toLocaleString()} verses</strong><span>${page.total ? state.verseOffset + 1 : 0}–${state.verseOffset + page.entries.length} of ${page.total.toLocaleString()}</span></div>` : state.busy ? '<p role="status" class="notice">Opening verses…</p>' : ""}
+  <div class="verse-catalogue-scroll"><div class="verse-catalogue${columns.length ? " has-frequency-columns" : ""}" style="--frequency-columns:${columns.length}">${headers}
+  ${page ? (page.total ? `<div class="verse-table">${page.entries.map((entry) => `<button class="verse-row" ${verseButton(entry.verse)}><span><strong>${escape(reference(entry.verse))}</strong><span class="scripture">${escape(entry.verse.text)}</span></span><span>${entry.words}</span><span>${entry.letters}</span><span>${entry.phrases.toLocaleString()}</span>${columns.map(({ frequency, index, kind }) => `<span class="verse-frequency-value" data-frequency="${frequency}" data-frequency-kind="${kind}">${(kind === "words" ? entry.frequencyCounts : entry.phraseFrequencyCounts)?.[index] ?? 0}</span>`).join("")}</button>`).join("")}</div>` : '<p class="notice">No verses match these counts. Clear or change a filter to see more verses.</p>') : ""}</div></div>
+  ${page?.total ? `<div class="chapter-navigation"><button data-action="verses-previous"${state.verseOffset === 0 || state.busy ? " disabled" : ""}>← Previous verses</button><span>Page ${Math.floor(state.verseOffset / pageSize) + 1}</span><button data-action="verses-next"${state.verseOffset + pageSize >= page.total || state.busy ? " disabled" : ""}>Next verses →</button></div>` : ""}
+  </section>`;
 };
 export const verseDetailView = (state: State): string => {
   const detail = state.verseDetail;
@@ -44,8 +66,8 @@ export const verseDetailView = (state: State): string => {
         ? `<dl class="book-statistics"><div><dt>Words in verse</dt><dd>${detail.words}</dd></div><div><dt>Letters in verse</dt><dd>${detail.letters}</dd></div><div><dt>Distinct phrases</dt><dd>${detail.phrases.toLocaleString()}</dd></div></dl>
   <p class="scripture interactive-verse">${clickableText(detail.verse.text, detail.wordParts)}</p><p class="counting-note">Choose any word to open its Word page.</p>
   ${contextWordTable("Words in this verse", "verse-words", detail.wordEntries, state.verseWordSort)}
-  <h2>Phrases in this verse</h2><p class="counting-note">Phrases of 2–32 words with original capitalization and punctuation. Click a header to sort; click it again to reverse. When a phrase occurs once, shorter phrases inside it that also occur once are hidden. Occurrences and Books cover the whole Bible.</p>
-  <div class="result-summary" role="status"><strong>${detail.phraseResults.total.toLocaleString()} phrases shown of ${detail.phrases.toLocaleString()}</strong><span>${detail.phraseResults.total ? state.versePhraseOffset + 1 : 0}–${state.versePhraseOffset + detail.phraseResults.entries.length} of ${detail.phraseResults.total.toLocaleString()}</span></div>
+  <h2>Phrases in this verse</h2><p class="counting-note">Phrases of 2–90 words with original capitalization and punctuation. Click a header to sort; click it again to reverse. Shorter phrases with the same Bible-wide occurrence count as a containing phrase are rolled into the longest containing phrase. Occurrences and Books cover the whole Bible.</p>
+  <div class="result-summary" role="status"><strong>${detail.phrases.toLocaleString()} phrases</strong><span>${detail.phraseResults.total ? state.versePhraseOffset + 1 : 0}–${state.versePhraseOffset + detail.phraseResults.entries.length} of ${detail.phraseResults.total.toLocaleString()}</span></div>
   ${detail.phraseResults.total ? `<div class="verse-phrase-table">${contextPhraseHeader("verse-phrases", state.versePhraseSort)}${detail.phraseResults.entries.map(contextPhraseRow).join("")}</div><div class="chapter-navigation"><button data-action="verse-phrases-previous"${state.versePhraseOffset === 0 ? " disabled" : ""}>← Previous phrases</button><span>Page ${Math.floor(state.versePhraseOffset / pageSize) + 1}</span><button data-action="verse-phrases-next"${state.versePhraseOffset + pageSize >= detail.phraseResults.total ? " disabled" : ""}>Next phrases →</button></div>` : '<p class="notice">This verse has no phrases of two or more words.</p>'}`
         : ""
   }</section>`;

@@ -38,12 +38,16 @@ const dispatch = (action: Action, preservePosition = false) => {
     preservePosition && main
       ? { top: main.scrollTop, left: main.scrollLeft }
       : null;
+  const catalogueLeft = preservePosition
+    ? root.querySelector<HTMLElement>(".verse-catalogue-scroll")?.scrollLeft
+    : undefined;
   const focused = preservePosition
     ? (document.activeElement as HTMLElement | null)
     : null;
   const sortFocus = focused?.dataset.sortOwner
     ? { owner: focused.dataset.sortOwner, field: focused.dataset.sortField }
     : null;
+  const frequencyFocus = focused?.dataset.verseFrequencySort;
   state = reduce(state, action);
   root.innerHTML = view(state);
   if (position) {
@@ -53,6 +57,16 @@ const dispatch = (action: Action, preservePosition = false) => {
       updated.scrollLeft = position.left;
     }
   }
+  if (catalogueLeft != null) {
+    const scroll = root.querySelector<HTMLElement>(".verse-catalogue-scroll");
+    if (scroll) scroll.scrollLeft = catalogueLeft;
+  }
+  if (frequencyFocus)
+    root
+      .querySelector<HTMLButtonElement>(
+        `[data-verse-frequency-sort="${frequencyFocus}"]`,
+      )
+      ?.focus({ preventScroll: true });
   if (sortFocus) {
     [...root.querySelectorAll<HTMLButtonElement>("[data-sort-owner]")]
       .find(
@@ -309,13 +323,33 @@ const verseList = async (
   book = state.verseBook,
   offset = state.verseOffset,
   filters = state.verseFilters,
+  preservePosition = false,
 ) => {
-  dispatch({ type: "verse-query", book, offset, filters });
-  const loaded = await load(
-    () => api.verseList(book, offset, filters),
-    (results) => ({ type: "verse-results", results }),
+  dispatch(
+    {
+      type: "verse-query",
+      book,
+      offset,
+      filters,
+      preserveResults: preservePosition,
+    },
+    preservePosition,
   );
-  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+  const loaded = await load(
+    () =>
+      api.verseCatalogue(
+        book,
+        offset,
+        filters,
+        state.verseFrequencies,
+        state.verseFrequencySort,
+        state.versePhraseFrequencies,
+      ),
+    (results) => ({ type: "verse-results", results }),
+    preservePosition,
+  );
+  if (loaded && !preservePosition)
+    root.querySelector("main")?.scrollTo({ top: 0 });
 };
 const verseDetails = async (
   location: Location,
@@ -474,6 +508,56 @@ root.addEventListener("click", (event) => {
       dispatch({ type: "phrase-word-sort", sort }, true);
     if (owner === "subphrases")
       dispatch({ type: "subphrase-sort", sort }, true);
+    return;
+  }
+  if (button.dataset.action === "verse-add-filter") {
+    dispatch(
+      { type: "verse-add-filter", open: !state.verseAddFilterOpen },
+      true,
+    );
+    root
+      .querySelector<HTMLInputElement>("#verse-frequency-input")
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  if (button.dataset.verseFrequencySort) {
+    const value = button.dataset.verseFrequencySort;
+    const kind = value.startsWith("phrase:") ? "phrases" : "words";
+    const frequency = Number(value.replace("phrase:", ""));
+    const direction =
+      (state.verseFrequencySort?.kind ?? "words") === kind &&
+      state.verseFrequencySort?.frequency === frequency &&
+      state.verseFrequencySort.direction === "desc"
+        ? "asc"
+        : "desc";
+    dispatch(
+      { type: "verse-frequency-sort", sort: { frequency, direction, kind } },
+      true,
+    );
+    void verseList(state.verseBook, 0, state.verseFilters, true);
+    return;
+  }
+  if (button.dataset.verseFrequencyRemove) {
+    const value = button.dataset.verseFrequencyRemove;
+    const kind = value.startsWith("phrase:") ? "phrases" : "words";
+    const frequency = Number(value.replace("phrase:", ""));
+    dispatch(
+      {
+        type: "verse-frequency-columns",
+        kind,
+        frequencies: (kind === "words"
+          ? state.verseFrequencies
+          : state.versePhraseFrequencies
+        ).filter((n) => n !== frequency),
+      },
+      true,
+    );
+    void verseList(state.verseBook, 0, state.verseFilters, true);
+    return;
+  }
+  if (button.dataset.action === "verse-bible-order") {
+    dispatch({ type: "verse-frequency-sort", sort: null }, true);
+    void verseList(state.verseBook, 0, state.verseFilters, true);
     return;
   }
   if (button.dataset.verseFilter) {
@@ -805,6 +889,7 @@ root.addEventListener("click", (event) => {
 
 root.addEventListener("input", (event) => {
   const input = event.target as HTMLInputElement;
+  if (input.id === "verse-frequency-input") input.setCustomValidity("");
   if (
     input.closest("#reader-highlights-form") &&
     (input.type === "number" || input.type === "color")
@@ -827,6 +912,10 @@ root.addEventListener("change", (event) => {
     control.form
   )
     syncOptionalControls(control.form);
+  if (control.id === "verse-frequency-kind")
+    root
+      .querySelector<HTMLInputElement>("#verse-frequency-input")
+      ?.setCustomValidity("");
   if (control.id === "book") void navigate({ book: control.value, chapter: 1 });
   if (control.id === "chapter")
     void navigate({
@@ -854,6 +943,44 @@ root.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
     void savedPhrases(0, readPhraseFilters());
+    return;
+  }
+  if (form.id === "verse-frequency-form") {
+    event.preventDefault();
+    const input = form.querySelector<HTMLInputElement>(
+      "#verse-frequency-input",
+    );
+    if (!input) return;
+    input.setCustomValidity("");
+    if (!form.reportValidity()) return;
+    const frequency = input.valueAsNumber;
+    const kind =
+      form.querySelector<HTMLSelectElement>("#verse-frequency-kind")?.value ===
+      "phrases"
+        ? "phrases"
+        : "words";
+    const columns =
+      kind === "words" ? state.verseFrequencies : state.versePhraseFrequencies;
+    if (columns.includes(frequency)) {
+      input.setCustomValidity("This frequency column is already present.");
+      input.reportValidity();
+      return;
+    }
+    if (
+      state.verseFrequencies.length + state.versePhraseFrequencies.length >=
+        5 ||
+      !Number.isSafeInteger(frequency)
+    )
+      return;
+    dispatch(
+      {
+        type: "verse-frequency-columns",
+        kind,
+        frequencies: [...columns, frequency],
+      },
+      true,
+    );
+    void verseList(state.verseBook, 0, state.verseFilters, true);
     return;
   }
   if (form.id === "verses-form") {

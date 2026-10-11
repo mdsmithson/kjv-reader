@@ -1,7 +1,14 @@
 import { wordRows, ordered } from "./detail-fixture.mjs";
 // Independent string-based verse oracle for preview and UI command tests.
-export const verseFixture = (corpus, tokenize, wordCatalogue) => {
-  const lines = corpus.map((verse) => ({
+export const verseFixture = (
+  corpus,
+  tokenize,
+  wordCatalogue,
+  savedPhraseCounts = null,
+  savedVisibleCounts = null,
+) => {
+  const lines = corpus.map((verse, id) => ({
+    id,
     verse,
     tokens: tokenize(verse.text),
   }));
@@ -9,7 +16,7 @@ export const verseFixture = (corpus, tokenize, wordCatalogue) => {
   const details = new Map();
   const phrasesFor = (tokens) => {
     const phrases = new Set();
-    for (let length = 2; length <= Math.min(32, tokens.length); length++)
+    for (let length = 2; length <= tokens.length; length++)
       for (let start = 0; start + length <= tokens.length; start++)
         phrases.add(tokens.slice(start, start + length).join(" "));
     return [...phrases].sort();
@@ -21,11 +28,107 @@ export const verseFixture = (corpus, tokenize, wordCatalogue) => {
         verse: line.verse,
         words: line.tokens.length,
         letters: (line.verse.text.match(/\p{Alphabetic}/gu) ?? []).length,
-        phrases: phrasesFor(line.tokens).length,
+        phrases:
+          savedVisibleCounts?.[line.id] ??
+          (savedPhraseCounts
+            ? Object.values(savedPhraseCounts[line.id]).reduce(
+                (a, b) => a + b,
+                0,
+              )
+            : phrasesFor(line.tokens).length),
       });
     return summaries.get(key(line.verse));
   };
+  const frequencyHistograms = new Map();
+  const histogram = (line) => {
+    if (!frequencyHistograms.has(line.id)) {
+      const counts = new Map();
+      for (const word of line.tokens) {
+        const frequency = wordCatalogue.detail(word).count;
+        counts.set(frequency, (counts.get(frequency) ?? 0) + 1);
+      }
+      frequencyHistograms.set(line.id, counts);
+    }
+    return frequencyHistograms.get(line.id);
+  };
+  // A bounded two-word oracle keeps UI transport tests independent and small.
+  // Full 2–90-word histograms are verified against Bible text in Rust.
+  const phraseFrequencyHistograms = new Map();
+  let globalPairs = null;
+  const phraseHistogram = (line) => {
+    if (savedPhraseCounts) {
+      if (!phraseFrequencyHistograms.has(line.id))
+        phraseFrequencyHistograms.set(
+          line.id,
+          new Map(
+            Object.entries(savedPhraseCounts[line.id]).map(
+              ([frequency, count]) => [Number(frequency), count],
+            ),
+          ),
+        );
+      return phraseFrequencyHistograms.get(line.id);
+    }
+    if (!globalPairs) {
+      globalPairs = new Map();
+      for (const row of lines)
+        for (let i = 0; i + 2 <= row.tokens.length; i++) {
+          const phrase = row.tokens.slice(i, i + 2).join(" ");
+          globalPairs.set(phrase, (globalPairs.get(phrase) ?? 0) + 1);
+        }
+    }
+    if (!phraseFrequencyHistograms.has(line.id)) {
+      const distinct = new Set();
+      for (let i = 0; i + 2 <= line.tokens.length; i++)
+        distinct.add(line.tokens.slice(i, i + 2).join(" "));
+      const counts = new Map();
+      for (const phrase of distinct) {
+        const frequency = globalPairs.get(phrase);
+        counts.set(frequency, (counts.get(frequency) ?? 0) + 1);
+      }
+      phraseFrequencyHistograms.set(line.id, counts);
+    }
+    return phraseFrequencyHistograms.get(line.id);
+  };
   return {
+    catalogue: ({
+      book = null,
+      offset = 0,
+      filters = {},
+      frequencies = [],
+      phraseFrequencies = [],
+      sort = null,
+    }) => {
+      const matches = lines.filter(
+        (line) =>
+          (book == null || line.verse.book === book) &&
+          (filters.words == null || line.tokens.length === filters.words) &&
+          (filters.letters == null ||
+            (line.verse.text.match(/\p{Alphabetic}/gu) ?? []).length ===
+              filters.letters) &&
+          (filters.phrases == null ||
+            summary(line).phrases === filters.phrases),
+      );
+      if (sort)
+        matches.sort((a, b) => {
+          const lookup = sort.kind === "phrases" ? phraseHistogram : histogram;
+          const left = lookup(a).get(sort.frequency) ?? 0,
+            right = lookup(b).get(sort.frequency) ?? 0;
+          return (
+            (sort.direction === "desc" ? right - left : left - right) ||
+            a.id - b.id
+          );
+        });
+      return {
+        total: matches.length,
+        entries: matches.slice(offset, offset + 50).map((line) => ({
+          ...summary(line),
+          phraseFrequencyCounts: phraseFrequencies.map(
+            (n) => phraseHistogram(line).get(n) ?? 0,
+          ),
+          frequencyCounts: frequencies.map((n) => histogram(line).get(n) ?? 0),
+        })),
+      };
+    },
     list: (book, offset, filters = {}) => {
       const matches = lines.filter(
         (line) =>
@@ -96,10 +199,9 @@ export const verseFixture = (corpus, tokenize, wordCatalogue) => {
         });
         const visible = allEntries.filter(
           (entry) =>
-            entry.occurrences !== 1 ||
             !allEntries.some(
               (parent) =>
-                parent.occurrences === 1 &&
+                parent.occurrences === entry.occurrences &&
                 parent.words > entry.words &&
                 ` ${parent.phrase} `.includes(` ${entry.phrase} `),
             ),
@@ -123,6 +225,7 @@ export const verseFixture = (corpus, tokenize, wordCatalogue) => {
         });
         details.set(key(line.verse), {
           ...summary(line),
+          phrases: visible.length,
           wordParts,
           entries,
           wordEntries: wordRows(line.verse.text, wordParts, wordCatalogue),

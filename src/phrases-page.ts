@@ -16,14 +16,14 @@ export const phrasesView = (state: State): string => {
   const page = state.savedPhrases;
   const fields: readonly [PhraseFilterField, string, number, number | null][] =
     [
-      ["words", "Words", 2, 32],
+      ["words", "Words", 2, 90],
       ["letters", "Letters", 0, null],
       ["occurrences", "Occurrences", 1, null],
       ["books", "Books", 1, 66],
     ];
   const headers = `<div class="phrase-table-heading"><span>Phrase</span>${fields.map(([field, label]) => `<button type="button" data-phrase-filter="${field}" aria-expanded="${state.phraseFilter === field || state.phraseFilters[field] != null}">${label}${state.phraseFilters[field] == null ? "" : ` = ${state.phraseFilters[field]}`}</button>`).join("")}</div>`;
   return `<section class="search-page phrases-page"><div class="eyebrow">EXPLORE SAVED PHRASES</div><h1>Phrases</h1>
-    <p class="intro">All Bible phrases of 2–32 words, alphabetically. Choose a phrase to see its verses.</p>
+    <p class="intro">Bible phrases of 2–90 words, alphabetically. Shorter phrases are counted only under the longest containing phrase with the same Bible-wide occurrence count. Choose a phrase to see its verses.</p>
     <p class="counting-note">Search for whole, consecutive words anywhere in a phrase. Enable Partial match to match parts of words. All phrase data is prepared in advance for fast browsing. Counts cover the whole Bible; letters exclude spaces, punctuation, and digits.</p>
     <form id="phrases-form"><div class="search-box"><input id="phrase-search" name="text" aria-label="Search phrases" placeholder="e.g. in the beginning" maxlength="250" value="${escape(state.phraseFilters.text ?? "")}"><button class="primary" type="submit">Search phrases →</button></div><label class="checkbox phrase-search-options"><input id="phrase-partial" name="partial" type="checkbox"${state.phraseFilters.partial ? " checked" : ""}> Partial match</label><div class="word-count-filters phrase-count-filters"${state.phraseFilter || fields.some(([field]) => state.phraseFilters[field] != null) ? "" : " hidden"}>${fields.map(([field, label, min, max]) => `<label${state.phraseFilter === field || state.phraseFilters[field] != null ? "" : " hidden"}>Exactly this many ${label.toLowerCase()}<input id="phrase-${field}-filter" type="number" name="${field}" min="${min}"${max == null ? "" : ` max="${max}"`} step="1" placeholder="Any number" value="${state.phraseFilters[field] ?? ""}"></label>`).join("")}<button type="submit" class="primary">Filter phrases →</button></div></form>
     <p class="counting-note">Click Words, Letters, Occurrences, or Books to enter an exact count, then press Enter or Filter phrases. Combine counts, or clear a field to remove its filter.</p>
@@ -54,7 +54,7 @@ export const phraseDetailView = (state: State): string => {
         : detail
           ? `<dl class="book-statistics"><div><dt>Words in phrase</dt><dd>${detail.words}</dd></div><div><dt>Letters in phrase</dt><dd>${detail.letters}</dd></div><div><dt>Occurrences in the Bible</dt><dd>${detail.occurrences.toLocaleString()}</dd></div><div><dt>Books containing phrase</dt><dd>${detail.books}</dd></div></dl>
     ${contextWordTable("Words in this phrase", "phrase-words", detail.wordEntries, state.phraseWordSort)}
-    <section class="subphrases-section"><h2>Subphrases in this phrase</h2><p class="counting-note">The phrase itself is excluded. Shorter phrases occurring once are grouped under longer subphrases that also occur once. Click a header to sort; click it again to reverse.</p>
+    <section class="subphrases-section"><h2>Subphrases in this phrase</h2><p class="counting-note">The phrase itself is excluded. Shorter phrases are grouped under the longest containing phrase with the same Bible-wide occurrence count. Click a header to sort; click it again to reverse.</p>
     <div class="result-summary"><strong>${detail.subphraseResults.total.toLocaleString()} subphrases</strong><span>${detail.subphraseResults.total ? state.subphraseOffset + 1 : 0}–${Math.min(state.subphraseOffset + pageSize, detail.subphraseResults.total)} of ${detail.subphraseResults.total.toLocaleString()}</span></div>
     ${
       detail.subphraseResults.total

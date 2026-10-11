@@ -41,7 +41,21 @@ const tokenize = (text) =>
 const wordCatalogue = wordFixture(corpus, tokenize);
 const numberCatalogue = numberFixture(wordCatalogue);
 const phraseCatalogue = phraseFixture(corpus, tokenize, wordCatalogue);
-const verseCatalogue = verseFixture(corpus, tokenize, wordCatalogue);
+const savedVisibleCounts = JSON.parse(
+  readFileSync("src-tauri/data/precomputed/verses.json", "utf8"),
+).entries.map((entry) => entry.display_phrases);
+const verseCatalogue = verseFixture(
+  corpus,
+  tokenize,
+  wordCatalogue,
+  JSON.parse(
+    readFileSync(
+      "src-tauri/data/precomputed/verse-phrase-frequency.json",
+      "utf8",
+    ),
+  ).counts,
+  savedVisibleCounts,
+);
 const tokenLines = corpus.map((verse) => ({
   book: verse.book,
   chapter: verse.chapter,
@@ -185,6 +199,8 @@ window.__TAURI__ = {
     invoke: async (command, args) => {
       if (command === "reader_highlights")
         return chapterHighlights(String(args.book), Number(args.chapter));
+      if (command === "verse_catalogue")
+        return verseCatalogue.catalogue(args.query);
       if (command === "verse_list")
         return verseCatalogue.list(
           args.book,
@@ -644,7 +660,8 @@ assert.deepEqual(
   ),
   genesisDetail.phraseResults.entries.map((entry) => entry.display),
 );
-assert.ok(genesisDetail.phraseResults.total < genesisDetail.phrases);
+assert.equal(genesisDetail.phraseResults.total, genesisDetail.phrases);
+assert.equal(genesisDetail.phrases, 15);
 assert.ok(
   !genesisDetail.phraseResults.entries.some(
     (entry) => entry.phrase === "beginning god",
@@ -807,7 +824,7 @@ find('[data-verse-filter="letters"]').click();
 find("#verse-letters-filter").value = "44";
 find('[data-verse-filter="phrases"]').click();
 assert.equal(find("#verse-letters-filter").value, "44");
-find("#verse-phrases-filter").value = "45";
+find("#verse-phrases-filter").value = "15";
 submitVerseFilters();
 await pause(30);
 assert.ok(
@@ -815,7 +832,7 @@ assert.ok(
     (row) =>
       Number(row.children[1].textContent) === 10 &&
       Number(row.children[2].textContent) === 44 &&
-      Number(row.children[3].textContent) === 45,
+      Number(row.children[3].textContent) === 15,
   ),
 );
 change("#verses-book", "Genesis");
@@ -825,7 +842,7 @@ find(".verse-row").click();
 await pause(30);
 find('.verse-detail-page [data-page="verses"]').click();
 await pause(30);
-assert.equal(find("#verse-phrases-filter").value, "45");
+assert.equal(find("#verse-phrases-filter").value, "15");
 find("#verse-phrases-filter").value = "999999";
 submitVerseFilters();
 await pause(30);
@@ -836,11 +853,252 @@ for (const field of ["words", "letters", "phrases"])
 submitVerseFilters();
 await pause(30);
 assert.equal(window.document.querySelectorAll(".verse-row").length, 50);
+// Added columns use global frequencies and sort the complete filtered catalogue.
+const addVerseFrequency = async (n) => {
+  find('[data-action="verse-add-filter"]').click();
+  find("#verse-frequency-input").value = String(n);
+  find("#verse-frequency-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await pause(30);
+};
+await addVerseFrequency(1);
+const shownFrequencyRows = () =>
+  [...window.document.querySelectorAll(".verse-row")].map((row) => ({
+    ref: row.querySelector("strong").textContent,
+    counts: [...row.querySelectorAll(".verse-frequency-value")].map((cell) =>
+      Number(cell.textContent),
+    ),
+  }));
+const frequencyExpected = (
+  frequencies,
+  sort = null,
+  offset = 0,
+  book = "Genesis",
+  filters = {},
+) =>
+  verseCatalogue
+    .catalogue({ book, offset, filters, frequencies, sort })
+    .entries.map((entry) => ({
+      ref: `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+      counts: entry.frequencyCounts,
+    }));
+assert.deepEqual(shownFrequencyRows(), frequencyExpected([1]));
+find("main").scrollTop = 1400;
+find('[data-verse-frequency-sort="1"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 1400);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected([1], { frequency: 1, direction: "desc" }),
+);
+find('[data-verse-frequency-sort="1"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 1400);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected([1], { frequency: 1, direction: "asc" }),
+);
+find('[data-action="verse-add-filter"]').click();
+find("#verse-frequency-input").value = "1";
+find("#verse-frequency-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+assert.equal(
+  find("#verse-frequency-input").validationMessage,
+  "This frequency column is already present.",
+);
+find("#verse-frequency-input").value = "2";
+find("#verse-frequency-input").dispatchEvent(
+  new window.Event("input", { bubbles: true }),
+);
+find("#verse-frequency-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+for (const n of [7, 22, 63919]) await addVerseFrequency(n);
+assert.equal(find('[data-action="verse-add-filter"]').disabled, true);
+assert.equal(
+  window.document.querySelectorAll(".verse-frequency-heading").length,
+  5,
+);
+find(".verse-catalogue-scroll").scrollLeft = 220;
+find('[data-verse-frequency-sort="63919"]').click();
+await pause(30);
+assert.equal(find(".verse-catalogue-scroll").scrollLeft, 220);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected([1, 2, 7, 22, 63919], {
+    frequency: 63919,
+    direction: "desc",
+  }),
+);
+change("#verses-book", "");
+await pause(30);
+find('[data-action="verses-next"]').click();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected(
+    [1, 2, 7, 22, 63919],
+    { frequency: 63919, direction: "desc" },
+    50,
+    null,
+  ),
+);
+find(".verse-row").click();
+await pause(30);
+find('.verse-detail-page [data-page="verses"]').click();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected(
+    [1, 2, 7, 22, 63919],
+    { frequency: 63919, direction: "desc" },
+    50,
+    null,
+  ),
+);
+find('[data-verse-filter="words"]').click();
+find("#verse-words-filter").value = "10";
+submitVerseFilters();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected(
+    [1, 2, 7, 22, 63919],
+    { frequency: 63919, direction: "desc" },
+    0,
+    null,
+    { words: 10 },
+  ),
+);
+find('[data-verse-frequency-remove="63919"]').click();
+await pause(30);
+assert.equal(
+  window.document.querySelectorAll(".verse-frequency-heading").length,
+  4,
+);
+assert.deepEqual(
+  shownFrequencyRows(),
+  frequencyExpected([1, 2, 7, 22], null, 0, null, { words: 10 }),
+);
+for (const n of [1, 2, 7, 22]) {
+  find(`[data-verse-frequency-remove="${n}"]`).click();
+  await pause(30);
+}
+find("#verse-words-filter").value = "";
+submitVerseFilters();
+await pause(30);
+// Word and phrase columns can share X while sorting independently.
+await addVerseFrequency(1);
+const addPhraseFrequency = async (n) => {
+  find('[data-action="verse-add-filter"]').click();
+  find("#verse-frequency-kind").value = "phrases";
+  find("#verse-frequency-input").value = String(n);
+  find("#verse-frequency-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await pause(30);
+};
+await addPhraseFrequency(1);
+assert.equal(
+  find('.verse-row [data-frequency-kind="phrases"]').textContent,
+  "1",
+);
+assert.equal(find(".verse-row").children[3].textContent, "15");
+const phraseExpected = (sort = null, offset = 0, book = null, filters = {}) =>
+  verseCatalogue
+    .catalogue({
+      book,
+      filters,
+      offset,
+      frequencies: [1],
+      phraseFrequencies: [1],
+      sort,
+    })
+    .entries.map((entry) => ({
+      ref: `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+      counts: [...entry.frequencyCounts, ...entry.phraseFrequencyCounts],
+    }));
+assert.deepEqual(shownFrequencyRows(), phraseExpected());
+find("main").scrollTop = 1400;
+find(".verse-catalogue-scroll").scrollLeft = 210;
+find('[data-verse-frequency-sort="phrase:1"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 1400);
+assert.equal(find(".verse-catalogue-scroll").scrollLeft, 210);
+assert.deepEqual(
+  shownFrequencyRows(),
+  phraseExpected({ kind: "phrases", frequency: 1, direction: "desc" }),
+);
+find('[data-verse-frequency-sort="phrase:1"]').click();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  phraseExpected({ kind: "phrases", frequency: 1, direction: "asc" }),
+);
+find('[data-action="verses-next"]').click();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  phraseExpected({ kind: "phrases", frequency: 1, direction: "asc" }, 50),
+);
+find(".verse-row").click();
+await pause(30);
+find('.verse-detail-page [data-page="verses"]').click();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  phraseExpected({ kind: "phrases", frequency: 1, direction: "asc" }, 50),
+);
+change("#verses-book", "Genesis");
+await pause(30);
+find('[data-verse-filter="words"]').click();
+find("#verse-words-filter").value = "10";
+submitVerseFilters();
+await pause(30);
+assert.deepEqual(
+  shownFrequencyRows(),
+  phraseExpected(
+    { kind: "phrases", frequency: 1, direction: "asc" },
+    0,
+    "Genesis",
+    { words: 10 },
+  ),
+);
+for (const n of [2, 7, 22]) await addPhraseFrequency(n);
+assert.equal(find('[data-action="verse-add-filter"]').disabled, true);
+assert.equal(
+  window.document.querySelectorAll(".verse-frequency-heading").length,
+  5,
+);
+find('[data-verse-frequency-remove="1"]').click();
+await pause(30);
+assert.equal(
+  find('[data-verse-frequency-sort="phrase:1"]')
+    .closest('[role="columnheader"]')
+    .getAttribute("aria-sort"),
+  "ascending",
+);
+find('[data-verse-frequency-remove="phrase:1"]').click();
+await pause(30);
+assert.equal(
+  window.document.querySelector('[data-action="verse-bible-order"]'),
+  null,
+);
+for (const n of [2, 7, 22]) {
+  find(`[data-verse-frequency-remove="phrase:${n}"]`).click();
+  await pause(30);
+}
+find("#verse-words-filter").value = "";
+submitVerseFilters();
+await pause(30);
 
 find('nav [data-page="reader"]').click();
-find("#verse-2").click();
+find("#verse-14").click();
 await pause(30);
-assert.ok(verseCatalogue.detail("Genesis", 1, 2, 0).phraseResults.total > 50);
+assert.ok(verseCatalogue.detail("Genesis", 1, 14, 0).phraseResults.total > 50);
 find('[data-action="verse-phrases-next"]').click();
 await pause(30);
 assert.deepEqual(
@@ -848,14 +1106,14 @@ assert.deepEqual(
     (row) => row.dataset.savedPhrase,
   ),
   verseCatalogue
-    .detail("Genesis", 1, 2, 50)
+    .detail("Genesis", 1, 14, 50)
     .phraseResults.entries.map((entry) => entry.phrase),
 );
 // Sort before paging, not just the current 50 rows.
 sortClick("verse-phrases", "occurrences");
 await pause(30);
 assertSortPosition();
-const numericPage = verseCatalogue.detail("Genesis", 1, 2, 0, {
+const numericPage = verseCatalogue.detail("Genesis", 1, 14, 0, {
   field: "occurrences",
   direction: "asc",
 });
@@ -872,11 +1130,21 @@ assert.deepEqual(
     (row) => row.dataset.savedPhrase,
   ),
   verseCatalogue
-    .detail("Genesis", 1, 2, 50, { field: "occurrences", direction: "asc" })
+    .detail("Genesis", 1, 14, 50, { field: "occurrences", direction: "asc" })
     .phraseResults.entries.map((entry) => entry.phrase),
 );
-const chosenPhraseLabel = find(".verse-phrase-row .scripture").textContent;
-find(".verse-phrase-row").click();
+find('[data-action="verse-phrases-previous"]').click();
+await pause(30);
+const chosenPhraseRow = [
+  ...window.document.querySelectorAll(".verse-phrase-row"),
+].sort(
+  (a, b) =>
+    tokenize(b.querySelector(".scripture").textContent).length -
+    tokenize(a.querySelector(".scripture").textContent).length,
+)[0];
+const chosenPhraseLabel =
+  chosenPhraseRow.querySelector(".scripture").textContent;
+chosenPhraseRow.click();
 await pause(30);
 assert.ok(find(".phrase-detail-page"));
 assert.equal(find(".phrase-detail-page h1").textContent, chosenPhraseLabel);
@@ -1897,6 +2165,68 @@ assert.deepEqual(
   displayedSavedPhrases(),
   expectedSearch("").entries.map((e) => e.phrase),
 );
+// Hidden singleton segments never appear even when the search targets them.
+const fullGenesisPhrase =
+  "in the beginning god created the heaven and the earth";
+const hiddenGenesisPhrase = "in the beginning god created the heaven and the";
+savedLengths.set(
+  "[10,null]",
+  new Map([
+    [fullGenesisPhrase, {}],
+    [hiddenGenesisPhrase, {}],
+    ["in the beginning god created", {}],
+  ]),
+);
+find("#phrase-search").value = hiddenGenesisPhrase;
+submitPhrases();
+await pause(30);
+assert.deepEqual(displayedSavedPhrases(), [fullGenesisPhrase]);
+find(".phrase-row").click();
+await pause(30);
+assert.ok(
+  phraseCatalogue
+    .detail(fullGenesisPhrase)
+    .subphraseResults.entries.every((entry) => entry.occurrences > 1),
+);
+find('[data-page="phrases"]').click();
+await pause(30);
+assert.deepEqual(displayedSavedPhrases(), [fullGenesisPhrase]);
+find("#phrase-search").value = "";
+submitPhrases();
+await pause(30);
+// The user's repeated Daniel passage rolls up to one 36-word phrase.
+const danielChild =
+  "band of iron and brass in the tender grass of the field and let it be";
+const danielParent =
+  "in the earth even with a band of iron and brass in the tender grass of the field and let it be wet with the dew of heaven and let his portion be with the beasts";
+savedLengths.set(
+  "[36,null]",
+  new Map([
+    [danielChild, {}],
+    [danielParent, {}],
+    ["band of iron and brass", {}],
+  ]),
+);
+find("#phrase-search").value = danielChild;
+find('[data-phrase-filter="occurrences"]').click();
+find("#phrase-occurrences-filter").value = "2";
+submitPhrases();
+await pause(30);
+assert.deepEqual(displayedSavedPhrases(), [danielParent]);
+find(".phrase-row").click();
+await pause(30);
+assert.equal(phraseCatalogue.detail(danielParent).words, 36);
+assert.ok(
+  !phraseCatalogue
+    .detail(danielParent)
+    .subphraseResults.entries.some((entry) => entry.occurrences === 2),
+);
+find('[data-page="phrases"]').click();
+await pause(30);
+find("#phrase-search").value = "";
+find("#phrase-occurrences-filter").value = "";
+submitPhrases();
+await pause(30);
 // Keep a manageable independent phrase sample with enough matches for paging.
 const numberPhraseCounts = new Map();
 for (const line of tokenLines)

@@ -89,7 +89,9 @@ impl PreparedPhrases {
                         .all(|(i, allowed)| allowed[self.tokens[start + i] as usize]);
                 prefix[start + 1] = prefix[start] + u32::from(matches);
             }
-            for (id, span) in self.search_spans.as_chunks::<2>().0.iter().enumerate() {
+            for &phrase_id in &self.visible.ids {
+                let id=phrase_id as usize;
+                let span=&self.search_spans[id*2..id*2+2];
                 let (start, length) = (span[0] as usize, span[1] as usize);
                 if length >= query.len() && prefix[start + length - query.len() + 1] > prefix[start]
                 {
@@ -123,12 +125,12 @@ impl PreparedPhrases {
         let allowed = restricted.then(|| {
             let mut allowed = vec![false; self.manifest.total];
             for group in self
-                .manifest
+                .visible
                 .groups
                 .iter()
                 .filter(|group| group.matches(filters))
             {
-                for &id in &self.ids[group.start..group.start + group.total] {
+                for &id in &self.visible.group_ids[group.start..group.start + group.total] {
                     allowed[id as usize] = true;
                 }
             }
@@ -191,6 +193,7 @@ mod tests {
                 }
             }
         }
+        let visible=super::super::visibility::oracle(&bible,4);
         let verify = |store: &PreparedPhrases| {
             for (text, partial, count, length) in [
                 ("GOD,", false, None, None),
@@ -207,7 +210,7 @@ mod tests {
                     .iter()
                     .filter(|(phrase, (n, l))| {
                         let tokens = crate::text::words(phrase);
-                        count.is_none_or(|count| *n == count)
+                        visible.contains(*phrase) && count.is_none_or(|count| *n == count)
                             && length.is_none_or(|length| *l == length)
                             && !query.is_empty()
                             && tokens.windows(query.len()).any(|window| {

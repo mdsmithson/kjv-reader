@@ -1,3 +1,8 @@
+export type VerseFrequencySort = Readonly<{
+  kind?: "words" | "phrases";
+  frequency: number;
+  direction: "asc" | "desc";
+}>;
 export type NumberPage = Readonly<{
   total: number;
   entries: readonly Readonly<{ number: number; words: number }>[];
@@ -46,6 +51,8 @@ export type ContextWord = Readonly<{
   books: number;
 }>;
 export type VerseSummary = Readonly<{
+  frequencyCounts?: readonly number[];
+  phraseFrequencyCounts?: readonly number[];
   verse: Verse;
   words: number;
   letters: number;
@@ -200,6 +207,10 @@ export type State = Readonly<{
   subphraseOffset: number;
   verseBook: string | null;
   verseFilters: VerseFilters;
+  verseFrequencies: readonly number[];
+  versePhraseFrequencies: readonly number[];
+  verseFrequencySort: VerseFrequencySort | null;
+  verseAddFilterOpen: boolean;
   verseFilter: keyof VerseFilters | null;
   verseOffset: number;
   verseResults: VersePage | null;
@@ -272,6 +283,13 @@ export type State = Readonly<{
   error: string | null;
 }>;
 export type Action =
+  | { type: "verse-add-filter"; open: boolean }
+  | {
+      type: "verse-frequency-columns";
+      frequencies: readonly number[];
+      kind?: "words" | "phrases";
+    }
+  | { type: "verse-frequency-sort"; sort: VerseFrequencySort | null }
   | { type: "number-query"; offset: number }
   | { type: "number-results"; results: NumberPage }
   | {
@@ -308,6 +326,7 @@ export type Action =
       book: string | null;
       offset: number;
       filters: VerseFilters;
+      preserveResults?: boolean;
     }
   | { type: "verse-filter"; field: keyof VerseFilters; filters: VerseFilters }
   | { type: "verse-results"; results: VersePage }
@@ -378,6 +397,10 @@ export const initialState: State = {
   subphraseOffset: 0,
   verseBook: null,
   verseFilters: { words: null, letters: null, phrases: null },
+  verseFrequencies: [],
+  versePhraseFrequencies: [],
+  verseFrequencySort: null,
+  verseAddFilterOpen: false,
   verseFilter: null,
   verseOffset: 0,
   verseResults: null,
@@ -461,6 +484,25 @@ export const reduce = (state: State, action: Action): State => {
       return { ...state, subphraseSort: action.sort, subphraseOffset: 0 };
     case "subphrase-offset":
       return { ...state, subphraseOffset: action.offset };
+    case "verse-add-filter":
+      return { ...state, verseAddFilterOpen: action.open };
+    case "verse-frequency-columns": {
+      const kind = action.kind ?? "words";
+      return {
+        ...state,
+        [kind === "words" ? "verseFrequencies" : "versePhraseFrequencies"]:
+          action.frequencies,
+        verseAddFilterOpen: false,
+        verseFrequencySort:
+          state.verseFrequencySort &&
+          (state.verseFrequencySort.kind ?? "words") === kind &&
+          !action.frequencies.includes(state.verseFrequencySort.frequency)
+            ? null
+            : state.verseFrequencySort,
+      };
+    }
+    case "verse-frequency-sort":
+      return { ...state, verseFrequencySort: action.sort };
     case "verse-filter":
       return {
         ...state,
@@ -474,7 +516,7 @@ export const reduce = (state: State, action: Action): State => {
         verseBook: action.book,
         verseFilters: action.filters,
         verseOffset: action.offset,
-        verseResults: null,
+        verseResults: action.preserveResults ? state.verseResults : null,
         busy: true,
         error: null,
       };

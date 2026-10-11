@@ -12,8 +12,8 @@ pub struct PhraseDetail {
 }
 pub fn details(bible: &Bible, phrase: &str, offset: usize) -> Result<PhraseDetail, String> {
     let tokens = crate::text::words(phrase);
-    if !(2..=32).contains(&tokens.len()) {
-        return Err("Choose a phrase of 2–32 words.".into());
+    if !(2..=90).contains(&tokens.len()) {
+        return Err("Choose a phrase of 2–90 words.".into());
     }
     let mut books = HashSet::new();
     let mut total = 0;
@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(result.results.verses[0].number, 1);
         assert_eq!(result.results.verses[1].book, "Exodus");
         assert!(details(&bible, "god", 0).is_err());
-        assert!(details(&bible, &vec!["god"; 33].join(" "), 0).is_err());
+        assert!(details(&bible, &vec!["god"; 91].join(" "), 0).is_err());
         assert!(details(&bible, "god word", usize::MAX)
             .unwrap()
             .results

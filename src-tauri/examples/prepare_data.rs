@@ -19,7 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         OccurrenceIndex::from_passages(bible.located_passages(), &root.join("target/preparation"));
     let start = Instant::now();
     let reusable = PreparedPhrases::open(&output, &bible).is_ok();
-    index.prepare_phrases(&output, 32)?;
+    let maximum_words=bible.passages().map(|(_,text)|kjv_reader_lib::text::words(text).len()).max().unwrap_or(2) as u16;
+    index.prepare_phrases(&output, maximum_words)?;
     index.prepare_analysis(&output.join("occurrences"))?;
     if !reusable || !output.join("words.json").exists() {
         serde_json::to_writer(
@@ -67,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (
             "Deep alphabetical page",
             PhraseFilters::default(),
-            1_000_000,
+            store.page(0,&PhraseFilters::default())?.total.saturating_sub(50),
         ),
         (
             "Occurrences = 7",
@@ -96,12 +97,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             0,
         ),
         (
-            "Frequent matches, later page",
+            "Singletons, later page",
             PhraseFilters {
                 occurrences: Some(1),
                 ..Default::default()
             },
-            1_000_000,
+            store.page(0,&PhraseFilters {occurrences:Some(1),..Default::default()})?.total.saturating_sub(50),
         ),
     ] {
         let before = Instant::now();

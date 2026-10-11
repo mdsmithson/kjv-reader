@@ -1,3 +1,4 @@
+import { equalCountRollup } from "./rollup-fixture.mjs";
 export const wordParts = (text) =>
   [...text.matchAll(/[\p{L}\p{N}']+/gu)].flatMap((match) => {
     const word = match[0].replace(/^'+|'+$/g, "");
@@ -58,6 +59,7 @@ export const phraseContents = (text, lines, tokenize, catalogue) => {
         owners: new Set(),
       });
     }
+  const locations = new Map();
   const lengths = [
     ...new Set([...metadata.values()].map((entry) => entry.words)),
   ];
@@ -66,6 +68,8 @@ export const phraseContents = (text, lines, tokenize, catalogue) => {
       for (let i = 0; i + length <= line.tokens.length; i++) {
         const entry = metadata.get(line.tokens.slice(i, i + length).join(" "));
         if (entry) {
+          if (!locations.has(entry.phrase))
+            locations.set(entry.phrase, { tokens: line.tokens, start: i });
           entry.occurrences++;
           entry.owners.add(line.book);
         }
@@ -74,15 +78,10 @@ export const phraseContents = (text, lines, tokenize, catalogue) => {
     ...entry,
     books: owners.size,
   }));
+  const isHidden = equalCountRollup(lines, tokenize);
+  isHidden.prepare(entries, locations);
   const visible = entries.filter(
-    (entry) =>
-      entry.occurrences !== 1 ||
-      !entries.some(
-        (parent) =>
-          parent.occurrences === 1 &&
-          parent.words > entry.words &&
-          ` ${parent.phrase} `.includes(` ${entry.phrase} `),
-      ),
+    (entry) => !isHidden(entry.phrase, entry.occurrences),
   );
   return {
     wordParts: parts,

@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         !cache.exists(),
         "Reading packaged source indexes must not create a cache"
     );
-    for length in [2, 3, 16, 32] {
+    for length in [2, 3, 16, 32,36,90] {
         let before = Instant::now();
         let page = store.page(
             0,
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let before=Instant::now();
         let page=store.page(0,&filters)?;
         println!("Search {text:?}, partial={partial}: {:?}; {} phrases",before.elapsed(),page.total);
-        assert!(page.total>50);
+        assert!(page.total>0);
         let query=kjv_reader_lib::text::words(text);
         for entry in &page.entries {
             let tokens=kjv_reader_lib::text::words(&entry.phrase);
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let later=store.page(50,&filters)?;
         println!("Cached search page: {:?}",before.elapsed());
         assert_eq!(later.total,page.total);
-        assert!(page.entries.last().unwrap().phrase < later.entries[0].phrase);
+        if page.total>50 {assert!(page.entries.last().unwrap().phrase < later.entries[0].phrase);} else {assert!(later.entries.is_empty());}
     }
     let numeric_phrases = store.page(0,&PhraseFilters {occurrences:Some(22),..Default::default()})?;
     assert!(numeric_phrases.total > 50);
@@ -102,6 +102,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Number 22: {} persisted phrases",numeric_phrases.total);
     let verses = PreparedVerses::open(&root, &bible, &store)?;
     assert_eq!(verses.page(None, 0)?.total, 31_102);
+    let frequencies=[1usize,2,7,22,63919];
+    let expected_frequency_rows:Vec<_>=bible.located_passages().map(|(book,chapter,number,text)| {
+        let mut counts=[0usize;5];
+        for word in kjv_reader_lib::text::words(text) {
+            let frequency=words.find_normalized(&word).unwrap().count;
+            if let Some(index)=frequencies.iter().position(|&value|value==frequency) {counts[index]+=1;}
+        }
+        (format!("{book} {chapter}:{number}"),counts)
+    }).collect();
+    for frequency in [1usize,22,63919] {
+        let column=frequencies.iter().position(|&n|n==frequency).unwrap();
+        for direction in ["asc","desc"] {
+            let mut expected:Vec<_>=(0..expected_frequency_rows.len()).collect();
+            expected.sort_by(|&left,&right| {
+                let cmp=expected_frequency_rows[left].1[column].cmp(&expected_frequency_rows[right].1[column]);
+                (if direction=="desc"{cmp.reverse()}else{cmp}).then(left.cmp(&right))
+            });
+            for offset in [0usize,50] {
+                let query=serde_json::from_value::<kjv_reader_lib::occurrences::prepared::VerseFrequencyQuery>(serde_json::json!({"frequencies":frequencies,"sort":{"frequency":frequency,"direction":direction},"offset":offset}))?;
+                let before=Instant::now();let page=verses.frequency_page(&query)?;
+                println!("Verse frequency {frequency} {direction}, offset {offset}: {:?}",before.elapsed());
+                assert_eq!(page.total,expected.len());
+                for (entry,&id) in page.entries.iter().zip(expected.iter().skip(offset)) {
+                    assert_eq!(format!("{} {}:{}",entry.verse.book,entry.verse.chapter,entry.verse.number),expected_frequency_rows[id].0);
+                    assert_eq!(entry.frequency_counts,expected_frequency_rows[id].1);
+                }
+            }
+        }
+    }
+
+
+    // Independent text oracle for phrase frequencies in representative verses.
+    let samples:Vec<_>=bible.located_passages().enumerate().filter(|(_, (book,chapter,number,_))| (*book=="Genesis" && *chapter==1 && *number==1) || (*book=="John" && *chapter==11 && *number==35) || (*book=="Psalms" && *chapter==136 && *number==1)).map(|(id,(_,_,_,text))|(id,kjv_reader_lib::text::words(text))).collect();
+    let maximum=samples.iter().map(|(_,tokens)|tokens.len().min(90)).max().unwrap();
+    let mut candidate_counts=std::collections::HashMap::<Vec<String>,usize>::new();
+    for (_,tokens) in &samples {for length in 2..=tokens.len().min(90) {for window in tokens.windows(length) {candidate_counts.entry(window.to_vec()).or_insert(0);}}}
+    for (_,text) in bible.passages() {
+        let tokens=kjv_reader_lib::text::words(text);
+        for length in 2..=maximum.min(tokens.len()) {for window in tokens.windows(length) {if let Some(count)=candidate_counts.get_mut(window) {*count+=1;}}}
+    }
+    let phrase_frequencies=[1usize,2,7,22,6268];
+    for (id,tokens) in samples {
+        let mut distinct=std::collections::HashSet::new();
+        for length in 2..=tokens.len().min(90) {distinct.extend(tokens.windows(length).map(|window|window.to_vec()));}
+        let parents:Vec<_>=distinct.iter().cloned().collect();
+        distinct.retain(|phrase|!parents.iter().any(|parent|candidate_counts.get(parent)==candidate_counts.get(phrase) && parent.len()>phrase.len() && parent.windows(phrase.len()).any(|window|window==phrase.as_slice())));
+        let expected:Vec<_>=phrase_frequencies.iter().map(|frequency|distinct.iter().filter(|phrase|candidate_counts.get(*phrase)==Some(frequency)).count()).collect();
+        let query=serde_json::from_value::<kjv_reader_lib::occurrences::prepared::VerseFrequencyQuery>(serde_json::json!({"offset":id,"phraseFrequencies":phrase_frequencies}))?;
+        let page=verses.frequency_page(&query)?;
+        assert_eq!(page.entries[0].phrase_frequency_counts,expected);
+        println!("Verified phrase frequency counts for {} {}:{}",page.entries[0].verse.book,page.entries[0].verse.chapter,page.entries[0].verse.number);
+    }
+    let canonical_phrases:Vec<_>=(0..31_102).step_by(50).flat_map(|offset| {
+        let query=serde_json::from_value::<kjv_reader_lib::occurrences::prepared::VerseFrequencyQuery>(serde_json::json!({"offset":offset,"phraseFrequencies":[1,22]})).unwrap();
+        verses.frequency_page(&query).unwrap().entries
+    }).collect();
+    for (column,frequency) in [(0usize,1usize),(1,22)] {
+        for direction in ["asc","desc"] {
+            let mut expected:Vec<_>=(0..canonical_phrases.len()).collect();
+            expected.sort_by(|&a,&b| {
+                let cmp=canonical_phrases[a].phrase_frequency_counts[column].cmp(&canonical_phrases[b].phrase_frequency_counts[column]);
+                (if direction=="desc"{cmp.reverse()}else{cmp}).then(a.cmp(&b))
+            });
+            for offset in [0usize,50] {
+                let query=serde_json::from_value::<kjv_reader_lib::occurrences::prepared::VerseFrequencyQuery>(serde_json::json!({"offset":offset,"phraseFrequencies":[1,22],"sort":{"kind":"phrases","frequency":frequency,"direction":direction}}))?;
+                let before=Instant::now();let page=verses.frequency_page(&query)?;
+                println!("Phrase column {frequency} {direction}, offset {offset}: {:?}",before.elapsed());
+                for (entry,&id) in page.entries.iter().zip(expected.iter().skip(offset)) {
+                    assert_eq!(serde_json::to_value(entry)?,serde_json::to_value(&canonical_phrases[id])?);
+                }
+            }
+        }
+    }
     for letters in [22,44,100,999999] {
         let page = verses.page_filtered(None,0,&kjv_reader_lib::occurrences::prepared::VerseFilters {letters:Some(letters),..Default::default()})?;
         let expected = bible.passages().filter(|(_,text)|text.chars().filter(|c|c.is_alphabetic()).count()==letters).count();
@@ -135,11 +208,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .filter(|c| c.is_alphabetic())
                 .count()
         );
-        let expected: std::collections::BTreeSet<_> = (2..=tokens.len().min(32))
+        let expected: std::collections::BTreeSet<_> = (2..=tokens.len().min(90))
             .flat_map(|length| tokens.windows(length).map(|window| window.join(" ")))
             .collect();
-        assert_eq!(detail.summary.phrases, expected.len());
         let visible_total = detail.phrase_results.total;
+        assert_eq!(detail.summary.phrases, visible_total);
         let actual: Vec<_> = (0..visible_total)
             .step_by(50)
             .flat_map(|offset| {
@@ -157,16 +230,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert!(actual.iter().all(|entry| expected.contains(&entry.phrase)));
         let present: std::collections::HashSet<_> =
             actual.iter().map(|entry| entry.phrase.as_str()).collect();
-        // Every hidden phrase must have a once-occurring longer parent; repeated phrases stay visible.
-        let unique: Vec<_> = actual
-            .iter()
-            .filter(|entry| entry.occurrences == 1)
-            .collect();
+        // Every hidden phrase must have a longer retained parent with the same count.
+        let parents: Vec<_> = actual.iter().collect();
         for missing in expected
             .iter()
             .filter(|phrase| !present.contains(phrase.as_str()))
         {
-            assert!(unique.iter().any(|parent| parent.words as usize
+            let occurrences=store.detail(&bible,missing,0)?.occurrences;
+            assert!(parents.iter().any(|parent| parent.occurrences as usize==occurrences && parent.words as usize
                 > kjv_reader_lib::text::words(missing).len()
                 && format!(" {} ", parent.phrase).contains(&format!(" {missing} "))));
         }
@@ -226,10 +297,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         }
+        assert_eq!(detail.summary.phrases,actual.len());
         let parent = actual.iter().max_by_key(|entry| entry.words).unwrap();
         let parent_text = parent.display.as_ref().unwrap();
         let before = Instant::now();
         let contents = store.contents(parent_text, &words)?;
+        assert!(contents.subphrase_results.entries.iter().all(|entry|entry.occurrences>1));
         println!(
             "Saved words and subphrases: {:?}; {} words, {} subphrases",
             before.elapsed(),
@@ -299,8 +372,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    let example="band of iron and brass in the tender grass of the field and let it be";
+    let longest="in the earth even with a band of iron and brass in the tender grass of the field and let it be wet with the dew of heaven and let his portion be with the beasts";
+    assert_eq!(store.detail(&bible,example,0)?.occurrences,2);
+    let page=store.page(0,&PhraseFilters {text:Some(example.into()),occurrences:Some(2),..Default::default()})?;
+    assert_eq!(page.total,1);assert_eq!(page.entries[0].phrase,longest);assert_eq!(page.entries[0].words,36);
+    for number in [15u16,23] {
+        let detail=verses.detail(&store,"Daniel",4,number,0)?;
+        let listed:Vec<_>=(0..detail.phrase_results.total).step_by(50).flat_map(|offset|verses.detail(&store,"Daniel",4,number,offset).unwrap().phrase_results.entries).collect();
+        assert_eq!(detail.summary.phrases,listed.len());assert!(listed.iter().any(|entry|entry.phrase==longest));
+        assert!(!listed.iter().any(|entry|entry.phrase==example));
+    }
+    println!("Verified Daniel equal-count rollup: one 36-word phrase, two occurrences.");
     let total = store.page(0, &PhraseFilters::default())?.total;
-    assert_eq!(total, 9_632_649);
+    assert_eq!(total, 182_550);
+    assert_eq!(store.page(0,&PhraseFilters {occurrences:Some(1),..Default::default()})?.total,30_560);
     println!("Verified packaged data: {total} phrases, every analysis length, statistics, and matching verses. No files generated.");
     Ok(())
 }

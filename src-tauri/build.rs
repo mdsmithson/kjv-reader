@@ -32,9 +32,20 @@ fn verify_prepared() {
         Some(1),
         "Rebuild prepared phrase data"
     );
+    let maximum_words = corpus
+        .values()
+        .map(|text| {
+            text.as_str()
+                .unwrap()
+                .split(|c: char| !c.is_alphanumeric() && c != '\'')
+                .filter(|word| !word.trim_matches('\'').is_empty())
+                .count()
+        })
+        .max()
+        .unwrap_or(2) as u64;
     assert_eq!(
         manifest["maximum_words"].as_u64(),
-        Some(32),
+        Some(maximum_words),
         "Prepare every phrase length before packaging"
     );
     assert_eq!(
@@ -61,7 +72,7 @@ fn verify_prepared() {
         &fs::read(root.join("verses.json")).expect("Run npm run prepare:data to prepare verses"),
     )
     .unwrap();
-    assert_eq!(verses["format"].as_u64(), Some(3));
+    assert_eq!(verses["format"].as_u64(), Some(4));
     assert_eq!(verses["fingerprint"].as_str(), Some(fingerprint.as_str()));
     assert_eq!(verses["maximum_words"], manifest["maximum_words"]);
     assert_eq!(verses["total"], manifest["verses"]);
@@ -100,6 +111,41 @@ fn verify_prepared() {
     assert_eq!(children["format"].as_u64(), Some(1));
     assert_eq!(children["fingerprint"], manifest["fingerprint"]);
     assert_eq!(children["total"], manifest["total"]);
+
+    let rollup: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("phrase-rollup.json"))
+            .expect("Prepare equal-count rollups before packaging"),
+    )
+    .unwrap();
+    assert_eq!(rollup["format"].as_u64(), Some(2));
+    assert_eq!(rollup["fingerprint"], manifest["fingerprint"]);
+    assert_eq!(rollup["total"], manifest["total"]);
+    assert_eq!(
+        fs::metadata(root.join("phrase-rollup-mask.bin"))
+            .unwrap()
+            .len(),
+        manifest["total"].as_u64().unwrap()
+    );
+    for name in ["phrase-rollup-ids.bin", "phrase-rollup-groups.bin"] {
+        assert_eq!(
+            fs::metadata(root.join(name)).unwrap().len(),
+            rollup["retained"].as_u64().unwrap() * 4
+        );
+    }
+    let frequencies: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("verse-phrase-frequency.json")).unwrap())
+            .unwrap();
+    assert_eq!(frequencies["format"].as_u64(), Some(3));
+    assert_eq!(frequencies["fingerprint"], manifest["fingerprint"]);
+    assert_eq!(frequencies["total"], verses["total"]);
+    assert_eq!(
+        fs::metadata(root.join("verse-phrase-frequency-order.bin"))
+            .unwrap()
+            .len(),
+        frequencies["frequencies"].as_array().unwrap().len() as u64
+            * frequencies["total"].as_u64().unwrap()
+            * 8
+    );
     let analysis = root
         .join("occurrences")
         .join(format!("occurrences-v4-{fingerprint}"));

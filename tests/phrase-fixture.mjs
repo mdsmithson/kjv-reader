@@ -1,3 +1,4 @@
+import { equalCountRollup } from "./rollup-fixture.mjs";
 import { phraseContents } from "./detail-fixture.mjs";
 // Independent string-based oracle for saved phrase browsing and verse details.
 export const phraseFixture = (verses, tokenize, wordCatalogue) => {
@@ -5,6 +6,7 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
     ...verse,
     tokens: tokenize(verse.text),
   }));
+  const isHidden = equalCountRollup(lines, tokenize);
   const contentsCache = new Map();
   const detail = (phrase, offset = 0) => {
     const original = phrase;
@@ -54,6 +56,7 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
     const lengths = [
       ...new Set([...candidates].map((phrase) => tokenize(phrase).length)),
     ].sort((a, b) => a - b);
+    const locations = new Map();
     const books = new Map();
     const occurrences = new Map();
     for (const length of lengths)
@@ -61,12 +64,21 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
         for (let i = 0; i + length <= line.tokens.length; i++) {
           const phrase = line.tokens.slice(i, i + length).join(" ");
           if (!candidates.has(phrase)) continue;
+          if (!locations.has(phrase))
+            locations.set(phrase, { tokens: line.tokens, start: i });
           const owners = books.get(phrase) ?? new Set();
           owners.add(line.book);
           books.set(phrase, owners);
           occurrences.set(phrase, (occurrences.get(phrase) ?? 0) + 1);
         }
       }
+    isHidden.prepare(
+      [...occurrences].map(([phrase, occurrences]) => ({
+        phrase,
+        occurrences,
+      })),
+      locations,
+    );
     const entries = [...candidates]
       .sort()
       .map((phrase) => ({
@@ -76,6 +88,7 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
         books: books.get(phrase)?.size ?? 0,
         occurrences: occurrences.get(phrase) ?? 0,
       }))
+      .filter((entry) => !isHidden(entry.phrase, entry.occurrences))
       .filter((entry) =>
         Object.entries(filters).every(([field, value]) => {
           if (field === "partial") return true;

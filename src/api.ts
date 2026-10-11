@@ -109,3 +109,15 @@ export const numberList = (offset: number) =>
   invoke<import("./model").NumberPage>("number_list", { offset });
 export const numberWords = (number: number, offset: number) =>
   invoke<WordPage>("number_words", { number, offset });
+
+export const verseCatalogue = (
+  book: string | null,
+  offset: number,
+  filters: import("./model").VerseFilters,
+  frequencies: readonly number[],
+  sort: import("./model").VerseFrequencySort | null,
+  phraseFrequencies: readonly number[] = [],
+) =>
+  invoke<import("./model").VersePage>("verse_catalogue", {
+    query: { book, offset, filters, frequencies, sort, phraseFrequencies },
+  });

@@ -2,13 +2,19 @@
 use super::*;
 use crate::bible::{Verse, PAGE_SIZE};
 use serde::{Deserialize, Serialize};
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
+mod frequency;
+pub use frequency::{VerseFrequencyQuery, VerseFrequencySort};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VerseSummary {
     pub verse: Verse,
     pub words: usize,
     pub letters: usize,
     pub phrases: usize,
+    #[serde(default, rename="frequencyCounts",skip_serializing_if="Vec::is_empty")]
+    pub frequency_counts: Vec<usize>,
+    #[serde(default,rename="phraseFrequencyCounts",skip_serializing_if="Vec::is_empty")]
+    pub phrase_frequency_counts: Vec<usize>,
 }
 #[derive(Clone, Default, Deserialize)]
 pub struct VerseFilters {
@@ -68,6 +74,8 @@ pub struct PreparedVerses {
     manifest: VerseManifest,
     locations: BTreeMap<(String, u16, u16), usize>,
     books: BTreeMap<String, (usize, usize)>,
+    frequencies: frequency::FrequencyIndex,
+    phrase_frequencies: frequency::FrequencyIndex,
 }
 pub(super) fn word_parts(text: &str) -> Vec<VerseWord> {
     fn flush(
@@ -141,20 +149,13 @@ pub(super) fn rolled_phrases(
             }
         }
     }
-    let mut unique: Vec<_> = located
-        .iter()
-        .filter(|entry| entry.occurrences == 1)
-        .copied()
-        .collect();
-    unique.sort_unstable_by_key(|entry| (entry.start, std::cmp::Reverse(entry.end)));
-    let mut hidden = HashSet::new();
-    let mut furthest = 0;
-    for entry in unique {
-        if entry.end <= furthest {
-            hidden.insert(entry.id);
-        } else {
-            furthest = entry.end;
-        }
+    let mut groups=BTreeMap::<u32,Vec<LocatedPhrase>>::new();
+    for &entry in &located {groups.entry(entry.occurrences).or_default().push(entry);}
+    let mut hidden=HashSet::new();
+    for entries in groups.values_mut() {
+        entries.sort_unstable_by_key(|entry|(entry.start,std::cmp::Reverse(entry.end)));
+        let mut furthest=0;
+        for entry in entries {if entry.end<=furthest {hidden.insert(entry.id);}else{furthest=entry.end;}}
     }
     located.retain(|entry| !hidden.contains(&entry.id));
     located.sort_unstable_by_key(|entry| entry.id);
@@ -207,8 +208,11 @@ pub(super) fn display_boundaries(text: &str, parts: &[VerseWord]) -> Vec<(u32, u
 }
 impl PreparedVerses {
     pub fn open(root: &Path, bible: &Bible, phrases: &PreparedPhrases) -> Result<Self, String> {
+        Self::open_base(root,bible,phrases,true)
+    }
+    fn open_base(root: &Path, bible: &Bible, phrases: &PreparedPhrases, with_frequencies: bool) -> Result<Self, String> {
         let run = || -> io::Result<Self> {
-            let manifest: VerseManifest = read_json(&root.join("verses.json"))?;
+            let mut manifest: VerseManifest = read_json(&root.join("verses.json"))?;
             if manifest.format != VERSION
                 || manifest.fingerprint != fingerprint(bible)
                 || manifest.maximum_words != phrases.manifest.maximum_words
@@ -254,7 +258,12 @@ impl PreparedVerses {
             {
                 return Err(invalid("Invalid verse directory totals"));
             }
+            for entry in &mut manifest.entries { entry.summary.phrases=entry.display_phrases; }
+            let phrase_frequencies=if with_frequencies {frequency::read_phrases(root,&manifest)?}else{Default::default()};
+            let frequencies = if with_frequencies {frequency::read(root,&manifest)?} else {Default::default()};
             Ok(Self {
+                frequencies,
+                phrase_frequencies,
                 root: root.into(),
                 manifest,
                 locations,
@@ -470,7 +479,11 @@ impl PreparedVerses {
 }
 impl PreparedPhrases {
     pub fn prepare_verses(&self, bible: &Bible) -> Result<(), String> {
-        if PreparedVerses::open(&self.root, bible, self).is_ok() {
+        self.prepare_verse_data(bible)?;
+        frequency::prepare(&self.root,bible).and_then(|_|frequency::prepare_phrases(&self.root)).map_err(|e|format!("Unable to prepare verse frequency data: {e}"))
+    }
+    fn prepare_verse_data(&self, bible: &Bible) -> Result<(), String> {
+        if PreparedVerses::open_base(&self.root, bible, self, false).is_ok() {
             return Ok(());
         }
         let run = || -> io::Result<()> {
@@ -576,6 +589,8 @@ impl PreparedPhrases {
                         words,
                         letters,
                         phrases: count,
+                        frequency_counts: Vec::new(),
+                        phrase_frequency_counts: Vec::new(),
                     },
                     word_start,
                     phrase_start,
@@ -705,7 +720,7 @@ mod tests {
         let filters = VerseFilters {
             words: Some(5),
             letters: Some(11),
-            phrases: Some(9),
+            phrases: Some(2),
         };
         let filtered = verses.page_filtered(None, 0, &filters).unwrap();
         assert_eq!(filtered.total, 1);
@@ -728,7 +743,7 @@ mod tests {
                     None,
                     0,
                     &VerseFilters {
-                        phrases: Some(2294),
+                        phrases: Some(59),
                         ..Default::default()
                     }
                 )
@@ -753,7 +768,8 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect();
-        assert_eq!(detail.summary.phrases, expected.len());
+        let visible=super::visibility::oracle(&bible,32);
+        assert_eq!(detail.summary.phrases, expected.keys().filter(|phrase|visible.contains(*phrase)).count());
         assert_eq!(
             detail
                 .phrase_results
@@ -899,7 +915,7 @@ mod tests {
         let mut all = Vec::new();
         for offset in (0..59).step_by(PAGE_SIZE) {
             let page = verses.detail(&phrases, "Genesis", 1, 2, offset).unwrap();
-            assert_eq!(page.summary.phrases, 2294);
+            assert_eq!(page.summary.phrases, 59);
             assert_eq!(page.phrase_results.total, 59);
             all.extend(page.phrase_results.entries);
         }
