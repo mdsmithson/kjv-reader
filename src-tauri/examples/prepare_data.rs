@@ -33,6 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &BookStatistics::new(&bible),
         )?;
     }
+    if !reusable || !output.join("numbers.json").exists() {
+        let words: WordStatistics = serde_json::from_reader(File::open(output.join("words.json"))?)?;
+        serde_json::to_writer(BufWriter::new(File::create(output.join("numbers.json"))?),
+            &kjv_reader_lib::number_stats::NumberStatistics::new(&words))?;
+    }
     let load = Instant::now();
     let store = PreparedPhrases::open(&output, &bible)?;
     println!("Open prepared data: {:?}", load.elapsed());

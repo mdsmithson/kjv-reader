@@ -78,8 +78,12 @@ export const savedPhrases = (
 export const phraseDetails = (phrase: string, offset: number) =>
   invoke<PhraseDetail>("phrase_details", { phrase, offset });
 
-export const verseList = (book: string | null, offset: number) =>
-  invoke<import("./model").VersePage>("verse_list", { book, offset });
+export const verseList = (
+  book: string | null,
+  offset: number,
+  filters: import("./model").VerseFilters,
+) =>
+  invoke<import("./model").VersePage>("verse_list", { book, offset, filters });
 export const verseDetails = (
   location: Location,
   offset: number,
@@ -100,3 +104,8 @@ export const readerHighlights = (location: Location) =>
     book: location.book,
     chapter: location.chapter,
   });
+
+export const numberList = (offset: number) =>
+  invoke<import("./model").NumberPage>("number_list", { offset });
+export const numberWords = (number: number, offset: number) =>
+  invoke<WordPage>("number_words", { number, offset });

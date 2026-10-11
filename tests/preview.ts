@@ -1,3 +1,4 @@
+import { numberFixture } from "./number-fixture.mjs";
 import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
 // Development-only visual fixture. Not included in the production entry point.
 import source from "../src-tauri/data/kjv.json";
@@ -16,6 +17,7 @@ const tokenize = (text: string) =>
     .map((word) => word.replace(/^'+|'+$/g, "").toLowerCase())
     .filter(Boolean);
 const wordCatalogue = wordFixture(verses, tokenize);
+const numberCatalogue = numberFixture(wordCatalogue);
 const phraseCatalogue = phraseFixture(verses, tokenize, wordCatalogue);
 const verseCatalogue = verseFixture(verses, tokenize, wordCatalogue);
 const tokenLines = verses.map((verse) => ({
@@ -65,7 +67,11 @@ window.__TAURI__ = {
           Number(args?.chapter),
         ) as T;
       if (command === "verse_list")
-        return verseCatalogue.list(args?.book, Number(args?.offset)) as T;
+        return verseCatalogue.list(
+          args?.book,
+          Number(args?.offset),
+          args?.filters,
+        ) as T;
       if (command === "verse_details") {
         const query = args?.query as Record<string, unknown>;
         return verseCatalogue.detail(
@@ -76,6 +82,13 @@ window.__TAURI__ = {
           query.sort,
         ) as T;
       }
+      if (command === "number_list")
+        return numberCatalogue.list(Number(args?.offset)) as T;
+      if (command === "number_words")
+        return numberCatalogue.words(
+          Number(args?.number),
+          Number(args?.offset),
+        ) as T;
       if (command === "word_list")
         return wordCatalogue.list(
           String(args?.text),

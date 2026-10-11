@@ -29,12 +29,12 @@ export const wordsView = (state: State): string => {
 
 export const wordDetailView = (state: State): string => {
   const word = state.wordDetail;
-  return `<section class="search-page word-detail-page"><button data-page="words">← Back to Words</button><div class="eyebrow">WORD IN THE BIBLE</div><h1 class="scripture">${escape(state.selectedWord)}</h1>
+  return `<section class="search-page word-detail-page">${state.wordReturnNumber == null ? '<button data-page="words">← Back to Words</button>' : `<button data-number="${state.wordReturnNumber}" data-number-return="true">← Back to ${state.wordReturnNumber.toLocaleString()}</button>`}<div class="eyebrow">WORD IN THE BIBLE</div><h1 class="scripture">${escape(state.selectedWord)}</h1>
     ${
       state.busy
         ? '<p class="notice" role="status">Loading word details…</p>'
         : word
-          ? `<dl class="book-statistics"><div><dt>Appearances in the Bible</dt><dd>${word.count.toLocaleString()}</dd></div><div><dt>Books containing this word</dt><dd>${word.books.length}</dd></div><div><dt>Letters in the word</dt><dd>${word.letters}</dd></div></dl>
+          ? `<dl class="book-statistics"><div><dt>Appearances in the Bible</dt><dd><button class="number-stat-link" data-number="${word.count}" aria-label="Explore number ${word.count}, appearances in the Bible">${word.count.toLocaleString()}</button></dd></div><div><dt>Books containing this word</dt><dd><button class="number-stat-link" data-number="${word.books.length}" aria-label="Explore number ${word.books.length}, books containing this word">${word.books.length}</button></dd></div><div><dt>Letters in the word</dt><dd><button class="number-stat-link" data-number="${word.letters}" aria-label="Explore number ${word.letters}, letters in the word">${word.letters}</button></dd></div></dl>
     <p class="counting-note">Letters exclude apostrophes, punctuation, and digits. Each repeated appearance is counted.</p>
     <h2>First mention</h2><button class="result" data-book="${escape(word.firstMention.book)}" data-chapter="${word.firstMention.chapter}" data-verse="${word.firstMention.number}"><span class="result-reference">${escape(reference(word.firstMention))} ↗</span><span class="scripture">${escape(word.firstMention.text)}</span></button>
     <h2>Books containing “${escape(word.word)}”</h2><p class="counting-note">Books are listed in Bible order. Choose a book to see this word’s verses.</p>

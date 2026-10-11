@@ -1,3 +1,12 @@
+export type NumberPage = Readonly<{
+  total: number;
+  entries: readonly Readonly<{ number: number; words: number }>[];
+}>;
+export type VerseFilters = Readonly<{
+  words: number | null;
+  letters: number | null;
+  phrases: number | null;
+}>;
 export type ReaderHighlightRule = Readonly<{ enabled: boolean; color: string }>;
 export type ReaderHighlightOptions = Readonly<{
   exclusive: ReaderHighlightRule;
@@ -65,12 +74,17 @@ export type SavedPhrase = Readonly<{
   occurrences: number;
 }>;
 export type PhraseFilters = Readonly<{
+  text?: string;
+  partial?: boolean;
   words: number | null;
   letters: number | null;
   occurrences: number | null;
   books: number | null;
 }>;
-export type PhraseFilterField = keyof PhraseFilters;
+export type PhraseFilterField = Exclude<
+  keyof PhraseFilters,
+  "text" | "partial"
+>;
 export type SavedPhrasePage = Readonly<{
   total: number;
   entries: readonly SavedPhrase[];
@@ -185,12 +199,16 @@ export type State = Readonly<{
   subphraseSort: DetailSort;
   subphraseOffset: number;
   verseBook: string | null;
+  verseFilters: VerseFilters;
+  verseFilter: keyof VerseFilters | null;
   verseOffset: number;
   verseResults: VersePage | null;
   selectedVerse: Location | null;
   versePhraseOffset: number;
   verseDetail: VerseDetail | null;
   page:
+    | "numbers"
+    | "number-detail"
     | "verses"
     | "verse-detail"
     | "phrases"
@@ -212,6 +230,18 @@ export type State = Readonly<{
   selectedPhrase: string;
   phraseVerseOffset: number;
   phraseDetail: PhraseDetail | null;
+  numberOffset: number;
+  numberResults: NumberPage | null;
+  selectedNumber: number;
+  numberWordOffset: number;
+  numberWords: WordPage | null;
+  numberPhraseOffset: number;
+  numberVerseOffset: number;
+  numberPhrases: SavedPhrasePage | null;
+  numberVerses: VersePage | null;
+  phraseReturnNumber: number | null;
+  verseReturnNumber: number | null;
+  wordReturnNumber: number | null;
   wordBooks: number | null;
   wordCount: number | null;
   wordFilter: "books" | "count" | null;
@@ -242,6 +272,29 @@ export type State = Readonly<{
   error: string | null;
 }>;
 export type Action =
+  | { type: "number-query"; offset: number }
+  | { type: "number-results"; results: NumberPage }
+  | {
+      type: "number-select";
+      number: number;
+      offset: number;
+      phraseOffset: number;
+      verseOffset: number;
+    }
+  | {
+      type: "number-profile";
+      words: WordPage;
+      phrases: SavedPhrasePage;
+      verses: VersePage;
+    }
+  | {
+      type: "number-section-query";
+      section: "words" | "phrases" | "verses";
+      offset: number;
+    }
+  | { type: "number-phrases"; results: SavedPhrasePage }
+  | { type: "number-verses"; results: VersePage }
+  | { type: "number-words"; results: WordPage }
   | { type: "reader-highlight-options"; options: ReaderHighlightOptions }
   | { type: "reader-highlight-panel"; open: boolean }
   | { type: "reader-highlight-saved"; status: "saved" | "error" }
@@ -250,7 +303,13 @@ export type Action =
   | { type: "phrase-word-sort"; sort: DetailSort }
   | { type: "subphrase-sort"; sort: DetailSort }
   | { type: "subphrase-offset"; offset: number }
-  | { type: "verse-query"; book: string | null; offset: number }
+  | {
+      type: "verse-query";
+      book: string | null;
+      offset: number;
+      filters: VerseFilters;
+    }
+  | { type: "verse-filter"; field: keyof VerseFilters; filters: VerseFilters }
   | { type: "verse-results"; results: VersePage }
   | {
       type: "verse-select";
@@ -318,6 +377,8 @@ export const initialState: State = {
   subphraseSort: { field: "phrase", direction: "asc" },
   subphraseOffset: 0,
   verseBook: null,
+  verseFilters: { words: null, letters: null, phrases: null },
+  verseFilter: null,
   verseOffset: 0,
   verseResults: null,
   selectedVerse: null,
@@ -330,6 +391,18 @@ export const initialState: State = {
   selectedPhrase: "",
   phraseVerseOffset: 0,
   phraseDetail: null,
+  numberOffset: 0,
+  numberResults: null,
+  selectedNumber: 1,
+  numberWordOffset: 0,
+  numberWords: null,
+  numberPhraseOffset: 0,
+  numberVerseOffset: 0,
+  numberPhrases: null,
+  numberVerses: null,
+  phraseReturnNumber: null,
+  verseReturnNumber: null,
+  wordReturnNumber: null,
   wordBooks: null,
   wordCount: null,
   wordFilter: null,
@@ -388,11 +461,18 @@ export const reduce = (state: State, action: Action): State => {
       return { ...state, subphraseSort: action.sort, subphraseOffset: 0 };
     case "subphrase-offset":
       return { ...state, subphraseOffset: action.offset };
+    case "verse-filter":
+      return {
+        ...state,
+        verseFilter: state.verseFilter === action.field ? null : action.field,
+        verseFilters: action.filters,
+      };
     case "verse-query":
       return {
         ...state,
         page: "verses",
         verseBook: action.book,
+        verseFilters: action.filters,
         verseOffset: action.offset,
         verseResults: null,
         busy: true,
@@ -409,6 +489,12 @@ export const reduce = (state: State, action: Action): State => {
       return {
         ...state,
         page: "verse-detail",
+        verseReturnNumber:
+          state.page === "number-detail"
+            ? state.selectedNumber
+            : state.page === "verse-detail"
+              ? state.verseReturnNumber
+              : null,
         selectedVerse: action.location,
         versePhraseOffset: action.offset,
         versePhraseSort: action.sort,
@@ -446,6 +532,13 @@ export const reduce = (state: State, action: Action): State => {
       return {
         ...state,
         page: "phrase-detail",
+        phraseReturnNumber:
+          state.page === "number-detail"
+            ? state.selectedNumber
+            : state.page === "phrase-detail" &&
+                state.selectedPhrase === action.phrase
+              ? state.phraseReturnNumber
+              : null,
         selectedPhrase: action.phrase,
         subphraseOffset:
           state.selectedPhrase === action.phrase ? state.subphraseOffset : 0,
@@ -458,6 +551,77 @@ export const reduce = (state: State, action: Action): State => {
       return {
         ...state,
         phraseDetail: action.detail,
+        busy: false,
+        error: null,
+      };
+    case "number-query":
+      return {
+        ...state,
+        page: "numbers",
+        numberOffset: action.offset,
+        numberResults: null,
+        busy: true,
+        error: null,
+      };
+    case "number-results":
+      return {
+        ...state,
+        numberResults: action.results,
+        busy: false,
+        error: null,
+      };
+    case "number-select":
+      return {
+        ...state,
+        page: "number-detail",
+        selectedNumber: action.number,
+        numberWordOffset: action.offset,
+        numberPhraseOffset: action.phraseOffset,
+        numberVerseOffset: action.verseOffset,
+        numberWords: null,
+        numberPhrases: null,
+        numberVerses: null,
+        busy: true,
+        error: null,
+      };
+    case "number-profile":
+      return {
+        ...state,
+        numberWords: action.words,
+        numberPhrases: action.phrases,
+        numberVerses: action.verses,
+        busy: false,
+        error: null,
+      };
+    case "number-section-query":
+      return {
+        ...state,
+        [action.section === "words"
+          ? "numberWordOffset"
+          : action.section === "phrases"
+            ? "numberPhraseOffset"
+            : "numberVerseOffset"]: action.offset,
+        busy: true,
+        error: null,
+      };
+    case "number-phrases":
+      return {
+        ...state,
+        numberPhrases: action.results,
+        busy: false,
+        error: null,
+      };
+    case "number-verses":
+      return {
+        ...state,
+        numberVerses: action.results,
+        busy: false,
+        error: null,
+      };
+    case "number-words":
+      return {
+        ...state,
+        numberWords: action.results,
         busy: false,
         error: null,
       };
@@ -493,6 +657,8 @@ export const reduce = (state: State, action: Action): State => {
         ...state,
         page: "word-detail",
         selectedWord: action.word,
+        wordReturnNumber:
+          state.page === "number-detail" ? state.selectedNumber : null,
         wordDetail: null,
         busy: true,
         error: null,

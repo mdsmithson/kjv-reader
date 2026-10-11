@@ -24,8 +24,8 @@ export const phrasesView = (state: State): string => {
   const headers = `<div class="phrase-table-heading"><span>Phrase</span>${fields.map(([field, label]) => `<button type="button" data-phrase-filter="${field}" aria-expanded="${state.phraseFilter === field || state.phraseFilters[field] != null}">${label}${state.phraseFilters[field] == null ? "" : ` = ${state.phraseFilters[field]}`}</button>`).join("")}</div>`;
   return `<section class="search-page phrases-page"><div class="eyebrow">EXPLORE SAVED PHRASES</div><h1>Phrases</h1>
     <p class="intro">All Bible phrases of 2–32 words, alphabetically. Choose a phrase to see its verses.</p>
-    <p class="counting-note">All phrase data is prepared in advance for fast browsing. Counts cover the whole Bible; letters exclude spaces, punctuation, and digits.</p>
-    <form id="phrases-form"${state.phraseFilter || Object.values(state.phraseFilters).some((value) => value != null) ? "" : " hidden"}><div class="word-count-filters phrase-count-filters">${fields.map(([field, label, min, max]) => `<label${state.phraseFilter === field || state.phraseFilters[field] != null ? "" : " hidden"}>Exactly this many ${label.toLowerCase()}<input id="phrase-${field}-filter" type="number" name="${field}" min="${min}"${max == null ? "" : ` max="${max}"`} step="1" placeholder="Any number" value="${state.phraseFilters[field] ?? ""}"></label>`).join("")}<button type="submit" class="primary">Filter phrases →</button></div></form>
+    <p class="counting-note">Search for whole, consecutive words anywhere in a phrase. Enable Partial match to match parts of words. All phrase data is prepared in advance for fast browsing. Counts cover the whole Bible; letters exclude spaces, punctuation, and digits.</p>
+    <form id="phrases-form"><div class="search-box"><input id="phrase-search" name="text" aria-label="Search phrases" placeholder="e.g. in the beginning" maxlength="250" value="${escape(state.phraseFilters.text ?? "")}"><button class="primary" type="submit">Search phrases →</button></div><label class="checkbox phrase-search-options"><input id="phrase-partial" name="partial" type="checkbox"${state.phraseFilters.partial ? " checked" : ""}> Partial match</label><div class="word-count-filters phrase-count-filters"${state.phraseFilter || fields.some(([field]) => state.phraseFilters[field] != null) ? "" : " hidden"}>${fields.map(([field, label, min, max]) => `<label${state.phraseFilter === field || state.phraseFilters[field] != null ? "" : " hidden"}>Exactly this many ${label.toLowerCase()}<input id="phrase-${field}-filter" type="number" name="${field}" min="${min}"${max == null ? "" : ` max="${max}"`} step="1" placeholder="Any number" value="${state.phraseFilters[field] ?? ""}"></label>`).join("")}<button type="submit" class="primary">Filter phrases →</button></div></form>
     <p class="counting-note">Click Words, Letters, Occurrences, or Books to enter an exact count, then press Enter or Filter phrases. Combine counts, or clear a field to remove its filter.</p>
     ${!state.busy && page ? `<div class="result-summary" role="status"><strong>${page.total.toLocaleString()} phrases</strong><span>${page.total ? state.savedPhraseOffset + 1 : 0}–${state.savedPhraseOffset + page.entries.length} of ${page.total.toLocaleString()}</span></div>` : ""}
     ${headers}
@@ -38,7 +38,7 @@ export const phrasesView = (state: State): string => {
         page.total
           ? `<div class="phrase-table">${page.entries.map((entry) => `<button class="phrase-row" data-saved-phrase="${escape(entry.phrase)}"><span class="scripture">${escape(entry.phrase)}</span><span>${entry.words}</span><span>${entry.letters}</span><span>${entry.occurrences.toLocaleString()}</span><span>${entry.books}</span></button>`).join("")}</div>
       <div class="chapter-navigation"><button data-action="saved-phrases-previous"${state.savedPhraseOffset === 0 ? " disabled" : ""}>← Previous phrases</button><span>Page ${Math.floor(state.savedPhraseOffset / pageSize) + 1}</span><button data-action="saved-phrases-next"${state.savedPhraseOffset + pageSize >= page.total ? " disabled" : ""}>Next phrases →</button></div>`
-          : `<p class="notice">${page.persistedLengths.length ? "No phrases match these counts. Clear or change a filter to see more phrases." : "Phrase data is unavailable. Reinstall the app to restore the bundled data."}</p>`
+          : `<p class="notice">${page.persistedLengths.length ? "No phrases match your search and counts. Clear or change the search or filters to see more phrases." : "Phrase data is unavailable. Reinstall the app to restore the bundled data."}</p>`
       }`
           : ""
     }
@@ -47,7 +47,7 @@ export const phrasesView = (state: State): string => {
 export const phraseDetailView = (state: State): string => {
   const detail = state.phraseDetail;
   const offset = state.phraseVerseOffset;
-  return `<section class="search-page phrase-detail-page"><button data-page="phrases">← Back to Phrases</button><div class="eyebrow">PHRASE IN THE BIBLE</div><h1 class="phrase-interactive-title">${detail ? clickableText(state.selectedPhrase, detail.wordParts) : escape(state.selectedPhrase)}</h1>
+  return `<section class="search-page phrase-detail-page">${state.phraseReturnNumber == null ? '<button data-page="phrases">← Back to Phrases</button>' : `<button data-number="${state.phraseReturnNumber}" data-number-return="true">← Back to ${state.phraseReturnNumber.toLocaleString()}</button>`}<div class="eyebrow">PHRASE IN THE BIBLE</div><h1 class="phrase-interactive-title">${detail ? clickableText(state.selectedPhrase, detail.wordParts) : escape(state.selectedPhrase)}</h1>
     ${
       state.busy
         ? '<p role="status" class="notice">Loading phrase verses…</p>'

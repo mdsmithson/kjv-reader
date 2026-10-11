@@ -77,9 +77,27 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
         occurrences: occurrences.get(phrase) ?? 0,
       }))
       .filter((entry) =>
-        Object.entries(filters).every(
-          ([field, value]) => value == null || entry[field] === value,
-        ),
+        Object.entries(filters).every(([field, value]) => {
+          if (field === "partial") return true;
+          if (field === "text") {
+            if (!value?.trim()) return true;
+            const query = tokenize(value);
+            const tokens = tokenize(entry.phrase);
+            return (
+              query.length > 0 &&
+              tokens.some(
+                (_, start) =>
+                  start + query.length <= tokens.length &&
+                  query.every((term, i) =>
+                    filters.partial
+                      ? tokens[start + i].includes(term)
+                      : tokens[start + i] === term,
+                  ),
+              )
+            );
+          }
+          return value == null || entry[field] === value;
+        }),
       );
     return {
       total: entries.length,

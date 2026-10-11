@@ -1,4 +1,5 @@
 pub mod bible;
+pub mod number_stats;
 pub mod reader_highlights;
 pub mod detail_lists;
 pub mod book_stats;
@@ -30,6 +31,7 @@ pub fn run() {
             app.manage(Arc::new(phrases));
             app.manage(serde_json::from_reader::<_, book_stats::BookStatistics>(std::fs::File::open(prepared.join("books.json"))?)?);
             app.manage(serde_json::from_reader::<_, word_stats::WordStatistics>(std::fs::File::open(prepared.join("words.json"))?)?);
+            app.manage(serde_json::from_reader::<_, number_stats::NumberStatistics>(std::fs::File::open(prepared.join("numbers.json"))?)?);
             let index = occurrences::OccurrenceIndex::from_passages(
                 bible.located_passages(),
                 &app.path().app_local_data_dir()?,
@@ -38,6 +40,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::number_list,
+            commands::number_words,
             commands::catalog,
             commands::reader_highlights,
             commands::verse_list,

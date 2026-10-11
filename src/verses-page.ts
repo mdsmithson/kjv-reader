@@ -10,25 +10,33 @@ const verseButton = (verse: VerseDetail["verse"]) =>
   `data-verse-detail="true" data-book="${escape(verse.book)}" data-chapter="${verse.chapter}" data-verse="${verse.number}"`;
 export const versesView = (state: State): string => {
   const page = state.verseResults;
+  const fields = [
+    ["words", "Words"],
+    ["letters", "Letters"],
+    ["phrases", "Phrases"],
+  ] as const;
+  const headers = `<div class="verse-table-heading"><span>Verse</span>${fields.map(([field, label]) => `<button data-verse-filter="${field}" type="button" aria-expanded="${state.verseFilter === field || state.verseFilters[field] != null}">${label}${state.verseFilters[field] == null ? "" : ` = ${state.verseFilters[field]}`}</button>`).join("")}</div>`;
   return `<section class="search-page verses-page"><div class="eyebrow">EXPLORE EVERY VERSE</div><h1>Verses</h1><p class="intro">Browse verses in Bible order. Choose a verse to explore its words and phrases.</p>
-    <label class="verse-book-filter">Within<select id="verses-book"><option value="">All books</option>${state.books.map((book) => `<option${book.name === state.verseBook ? " selected" : ""}>${escape(book.name)}</option>`).join("")}</select></label>
-    <p class="counting-note">Words include repeated appearances. Letters exclude spaces, punctuation, and digits. Phrases count distinct consecutive phrases of 2–32 words.</p>
-    ${
-      state.busy
-        ? '<p role="status" class="notice">Opening verses…</p>'
-        : page
-          ? `<div class="result-summary" role="status"><strong>${page.total.toLocaleString()} verses</strong><span>${page.total ? state.verseOffset + 1 : 0}–${state.verseOffset + page.entries.length} of ${page.total.toLocaleString()}</span></div>
-    <div class="verse-table"><div class="verse-table-heading"><span>Verse</span><span>Words</span><span>Letters</span><span>Phrases</span></div>${page.entries.map((entry) => `<button class="verse-row" ${verseButton(entry.verse)}><span><strong>${escape(reference(entry.verse))}</strong><span class="scripture">${escape(entry.verse.text)}</span></span><span>${entry.words}</span><span>${entry.letters}</span><span>${entry.phrases.toLocaleString()}</span></button>`).join("")}</div>
-    <div class="chapter-navigation"><button data-action="verses-previous"${state.verseOffset === 0 ? " disabled" : ""}>← Previous verses</button><span>Page ${Math.floor(state.verseOffset / pageSize) + 1}</span><button data-action="verses-next"${state.verseOffset + pageSize >= page.total ? " disabled" : ""}>Next verses →</button></div>`
-          : ""
-    }</section>`;
+  <form id="verses-form"><label class="verse-book-filter">Within<select id="verses-book"><option value="">All books</option>${state.books.map((book) => `<option${book.name === state.verseBook ? " selected" : ""}>${escape(book.name)}</option>`).join("")}</select></label>
+  <div class="word-count-filters">${fields.map(([field, label]) => `<label${state.verseFilter === field || state.verseFilters[field] != null ? "" : " hidden"}>Exactly this many ${label.toLowerCase()}<input id="verse-${field}-filter" name="${field}" type="number" min="${field === "words" ? 1 : 0}" step="1" placeholder="Any number" value="${state.verseFilters[field] ?? ""}"></label>`).join("")}<button class="primary" type="submit">Filter verses →</button></div></form>
+  <p class="counting-note">Click Words, Letters, or Phrases to enter an exact count, then press Enter or Filter verses. Combine counts with a book, or clear a field to remove its filter. Words include repetitions; letters exclude spaces, punctuation, and digits; phrases count all distinct consecutive phrases of 2–32 words.</p>
+  ${state.busy ? '<p role="status" class="notice">Opening verses…</p>' : page ? `<div class="result-summary" role="status"><strong>${page.total.toLocaleString()} verses</strong><span>${page.total ? state.verseOffset + 1 : 0}–${state.verseOffset + page.entries.length} of ${page.total.toLocaleString()}</span></div>` : ""}
+  ${headers}
+  ${
+    !state.busy && page
+      ? page.total
+        ? `<div class="verse-table">${page.entries.map((entry) => `<button class="verse-row" ${verseButton(entry.verse)}><span><strong>${escape(reference(entry.verse))}</strong><span class="scripture">${escape(entry.verse.text)}</span></span><span>${entry.words}</span><span>${entry.letters}</span><span>${entry.phrases.toLocaleString()}</span></button>`).join("")}</div>
+  <div class="chapter-navigation"><button data-action="verses-previous"${state.verseOffset === 0 ? " disabled" : ""}>← Previous verses</button><span>Page ${Math.floor(state.verseOffset / pageSize) + 1}</span><button data-action="verses-next"${state.verseOffset + pageSize >= page.total ? " disabled" : ""}>Next verses →</button></div>`
+        : '<p class="notice">No verses match these counts. Clear or change a filter to see more verses.</p>'
+      : ""
+  }</section>`;
 };
 export const verseDetailView = (state: State): string => {
   const detail = state.verseDetail;
   const heading = state.selectedVerse
     ? `${state.selectedVerse.book} ${state.selectedVerse.chapter}:${state.selectedVerse.verse}`
     : "Verse";
-  return `<section class="search-page verse-detail-page"><div class="verse-back-links"><button data-page="verses">← Back to Verses</button><button data-action="verse-reader">Read in chapter →</button></div><div class="eyebrow">A VERSE IN THE BIBLE</div><h1>${escape(heading)}</h1>
+  return `<section class="search-page verse-detail-page"><div class="verse-back-links">${state.verseReturnNumber == null ? '<button data-page="verses">← Back to Verses</button>' : `<button data-number="${state.verseReturnNumber}" data-number-return="true">← Back to ${state.verseReturnNumber.toLocaleString()}</button>`}<button data-action="verse-reader">Read in chapter →</button></div><div class="eyebrow">A VERSE IN THE BIBLE</div><h1>${escape(heading)}</h1>
   ${
     state.busy
       ? '<p role="status" class="notice">Opening verse details…</p>'

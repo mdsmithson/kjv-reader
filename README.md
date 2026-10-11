@@ -486,3 +486,18 @@ protection. No whole-Bible scan, frequency recount, or new phrase index is neede
 Saved preferences are validated before use; invalid colors and counts fall back
 to safe defaults. A failed preference write is reported in the drawer while the
 current session's highlights remain active.
+
+On **Verses**, click the **Words**, **Letters**, or **Phrases** header to reveal
+an exact-count filter, then press Enter or **Filter verses**. Count filters
+combine with each other and the selected book, apply before pagination, and
+remain active when returning from a verse detail page. Clear a numeric field
+to remove its restriction. Phrases filter the original distinct-phrase count,
+before the detail page's once-occurring phrase rollups. Header controls remain
+available even when no verses match. The filters read precomputed verse summary
+numbers directly; no Bible scan or phrase enumeration is needed.
+
+The Numbers section lists numeric profiles in ascending order. Each profile shows the alphabetically ordered words with that exact whole-Bible appearance count. Word detail appearance, book, and letter counts link to the corresponding numeric profile. The number-to-word index is prepared once in `numbers.json` and loaded directly; number pages never recount the Bible.
+
+Number profiles also show phrases with the exact whole-Bible occurrence count and verses with the exact letter count. Each list has independent pagination and links to its detail page. These lists use the bundled phrase indexes and saved verse summaries without recounting the Bible.
+
+Phrases search finds complete, consecutive words anywhere in a saved phrase, ignoring case and punctuation. An optional Partial match toggle searches parts of words. Text and count filters combine before pagination; the search index is prepared once and searches reuse cached matching phrase IDs.

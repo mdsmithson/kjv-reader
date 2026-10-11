@@ -13,6 +13,7 @@ import {
   type PhraseFilters,
   type PhraseFilterField,
   type DetailSort,
+  type VerseFilters,
 } from "./model";
 import { view, presentationControls } from "./view";
 import {
@@ -71,8 +72,17 @@ const adjustPresentation = (action: Action) => {
   const controls = root.querySelector(".presentation-controls");
   if (controls) controls.innerHTML = presentationControls(state);
 };
-const readPhraseFilters = (): PhraseFilters =>
-  Object.fromEntries(
+const readPhraseFilters = (): PhraseFilters => ({
+  ...state.phraseFilters,
+  text:
+    root.querySelector<HTMLInputElement>("#phrase-search")?.value ??
+    state.phraseFilters.text ??
+    "",
+  partial:
+    root.querySelector<HTMLInputElement>("#phrase-partial")?.checked ??
+    state.phraseFilters.partial ??
+    false,
+  ...Object.fromEntries(
     (["words", "letters", "occurrences", "books"] as const).map((field) => {
       const input = root.querySelector<HTMLInputElement>(
         `#phrase-${field}-filter`,
@@ -84,7 +94,8 @@ const readPhraseFilters = (): PhraseFilters =>
           : null,
       ];
     }),
-  ) as PhraseFilters;
+  ),
+});
 const refreshHighlightStatus = () => {
   const status = root.querySelector("#highlight-save-status");
   if (status) {
@@ -137,6 +148,24 @@ const toggleHighlightOptions = () => {
   const arrow = toggle?.querySelector("span");
   if (arrow) arrow.textContent = open ? "⌃" : "⌄";
 };
+const readVerseFilters = (): VerseFilters =>
+  Object.fromEntries(
+    (["words", "letters", "phrases"] as const).map((field) => {
+      const input = root.querySelector<HTMLInputElement>(
+        `#verse-${field}-filter`,
+      );
+      const value = input?.valueAsNumber;
+      return [
+        field,
+        input?.value &&
+        value != null &&
+        Number.isSafeInteger(value) &&
+        value >= (field === "words" ? 1 : 0)
+          ? value
+          : null,
+      ];
+    }),
+  ) as VerseFilters;
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -279,10 +308,11 @@ const phraseDetails = async (phrase: string, offset = 0) => {
 const verseList = async (
   book = state.verseBook,
   offset = state.verseOffset,
+  filters = state.verseFilters,
 ) => {
-  dispatch({ type: "verse-query", book, offset });
+  dispatch({ type: "verse-query", book, offset, filters });
   const loaded = await load(
-    () => api.verseList(book, offset),
+    () => api.verseList(book, offset, filters),
     (results) => ({ type: "verse-results", results }),
   );
   if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
@@ -303,6 +333,78 @@ const verseDetails = async (
   );
   if (loaded && !preservePosition)
     root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const numberList = async (offset = state.numberOffset) => {
+  dispatch({ type: "number-query", offset });
+  const loaded = await load(
+    () => api.numberList(offset),
+    (results) => ({ type: "number-results", results }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const numberPhraseFilters = (number: number): PhraseFilters => ({
+  words: null,
+  letters: null,
+  books: null,
+  occurrences: number,
+});
+const numberVerseFilters = (number: number): VerseFilters => ({
+  words: null,
+  letters: number,
+  phrases: null,
+});
+const numberProfile = async (
+  number = state.selectedNumber,
+  restore = false,
+) => {
+  if (!Number.isSafeInteger(number) || number < 0) return;
+  const offset = restore ? state.numberWordOffset : 0;
+  const phraseOffset = restore ? state.numberPhraseOffset : 0;
+  const verseOffset = restore ? state.numberVerseOffset : 0;
+  dispatch({
+    type: "number-select",
+    number,
+    offset,
+    phraseOffset,
+    verseOffset,
+  });
+  const loaded = await load(
+    async () => {
+      const [words, phrases, verses] = await Promise.all([
+        api.numberWords(number, offset),
+        api.savedPhrases(phraseOffset, numberPhraseFilters(number)),
+        api.verseList(null, verseOffset, numberVerseFilters(number)),
+      ]);
+      return { words, phrases, verses };
+    },
+    (result) => ({ type: "number-profile", ...result }),
+  );
+  if (loaded) root.querySelector("main")?.scrollTo({ top: 0 });
+};
+const numberSection = async (
+  section: "words" | "phrases" | "verses",
+  offset: number,
+) => {
+  const number = state.selectedNumber;
+  dispatch({ type: "number-section-query", section, offset }, true);
+  if (section === "words")
+    await load(
+      () => api.numberWords(number, offset),
+      (results) => ({ type: "number-words", results }),
+      true,
+    );
+  else if (section === "phrases")
+    await load(
+      () => api.savedPhrases(offset, numberPhraseFilters(number)),
+      (results) => ({ type: "number-phrases", results }),
+      true,
+    );
+  else
+    await load(
+      () => api.verseList(null, offset, numberVerseFilters(number)),
+      (results) => ({ type: "number-verses", results }),
+      true,
+    );
 };
 const wordDetails = async (word: string) => {
   dispatch({ type: "word-select", word });
@@ -337,6 +439,7 @@ root.addEventListener("click", (event) => {
       type: "page",
       page: button.dataset.page as State["page"],
     });
+    if (state.page === "numbers") void numberList();
     if (state.page === "verses") void verseList();
     if (state.page === "phrases") void savedPhrases();
     if (state.page === "words") void wordList();
@@ -371,6 +474,22 @@ root.addEventListener("click", (event) => {
       dispatch({ type: "phrase-word-sort", sort }, true);
     if (owner === "subphrases")
       dispatch({ type: "subphrase-sort", sort }, true);
+    return;
+  }
+  if (button.dataset.verseFilter) {
+    dispatch(
+      {
+        type: "verse-filter",
+        field: button.dataset.verseFilter as keyof VerseFilters,
+        filters: readVerseFilters(),
+      },
+      true,
+    );
+    root
+      .querySelector<HTMLInputElement>(
+        `#verse-${button.dataset.verseFilter}-filter`,
+      )
+      ?.focus({ preventScroll: true });
     return;
   }
   if (button.dataset.verseDetail) {
@@ -422,6 +541,19 @@ root.addEventListener("click", (event) => {
       ?.focus();
     return;
   }
+  if (button.dataset.numberSection) {
+    root
+      .querySelector(`#number-${button.dataset.numberSection}`)
+      ?.scrollIntoView({ block: "start" });
+    return;
+  }
+  if (button.dataset.number != null) {
+    void numberProfile(
+      Number(button.dataset.number),
+      !!button.dataset.numberReturn,
+    );
+    return;
+  }
   if (button.dataset.word) {
     void wordDetails(button.dataset.word);
     return;
@@ -468,6 +600,39 @@ root.addEventListener("click", (event) => {
       break;
     case "saved-phrases-next":
       void savedPhrases(state.savedPhraseOffset + pageSize);
+      break;
+    case "numbers-previous":
+      void numberList(Math.max(0, state.numberOffset - pageSize));
+      break;
+    case "numbers-next":
+      void numberList(state.numberOffset + pageSize);
+      break;
+    case "number-words-previous":
+      void numberSection(
+        "words",
+        Math.max(0, state.numberWordOffset - pageSize),
+      );
+      break;
+    case "number-words-next":
+      void numberSection("words", state.numberWordOffset + pageSize);
+      break;
+    case "number-phrases-previous":
+      void numberSection(
+        "phrases",
+        Math.max(0, state.numberPhraseOffset - pageSize),
+      );
+      break;
+    case "number-phrases-next":
+      void numberSection("phrases", state.numberPhraseOffset + pageSize);
+      break;
+    case "number-verses-previous":
+      void numberSection(
+        "verses",
+        Math.max(0, state.numberVerseOffset - pageSize),
+      );
+      break;
+    case "number-verses-next":
+      void numberSection("verses", state.numberVerseOffset + pageSize);
       break;
     case "verses-previous":
       void verseList(
@@ -599,6 +764,14 @@ root.addEventListener("click", (event) => {
       void search({ ...state.query, offset: state.query.offset + pageSize });
       break;
     case "retry":
+      if (state.page === "numbers") {
+        void numberList();
+        break;
+      }
+      if (state.page === "number-detail") {
+        void numberProfile(state.selectedNumber, true);
+        break;
+      }
       if (state.page === "verses") void verseList();
       if (state.page === "verse-detail" && state.selectedVerse)
         void verseDetails(state.selectedVerse, state.versePhraseOffset);
@@ -646,7 +819,7 @@ root.addEventListener("change", (event) => {
     return;
   }
   if (control.id === "verses-book") {
-    void verseList(control.value || null, 0);
+    void verseList(control.value || null, 0, readVerseFilters());
     return;
   }
   if (
@@ -681,6 +854,23 @@ root.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
     void savedPhrases(0, readPhraseFilters());
+    return;
+  }
+  if (form.id === "verses-form") {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    void verseList(
+      root.querySelector<HTMLSelectElement>("#verses-book")?.value || null,
+      0,
+      readVerseFilters(),
+    );
+    return;
+  }
+  if (form.id === "numbers-form") {
+    if (!form.reportValidity()) return;
+    const number =
+      form.querySelector<HTMLInputElement>("#number-input")?.valueAsNumber;
+    if (number != null) void numberProfile(number);
     return;
   }
   if (form.id === "words-form") {

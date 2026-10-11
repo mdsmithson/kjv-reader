@@ -10,6 +10,19 @@ pub struct VerseSummary {
     pub letters: usize,
     pub phrases: usize,
 }
+#[derive(Clone, Default, Deserialize)]
+pub struct VerseFilters {
+    pub words: Option<usize>,
+    pub letters: Option<usize>,
+    pub phrases: Option<usize>,
+}
+impl VerseFilters {
+    fn matches(&self, verse: &VerseSummary) -> bool {
+        self.words.is_none_or(|n| verse.words == n)
+            && self.letters.is_none_or(|n| verse.letters == n)
+            && self.phrases.is_none_or(|n| verse.phrases == n)
+    }
+}
 #[derive(Serialize)]
 pub struct VersePage {
     pub total: usize,
@@ -321,6 +334,14 @@ impl PreparedVerses {
         run().map_err(|e| format!("Unable to read chapter highlighting data: {e}"))
     }
     pub fn page(&self, book: Option<&str>, offset: usize) -> Result<VersePage, String> {
+        self.page_filtered(book, offset, &VerseFilters::default())
+    }
+    pub fn page_filtered(
+        &self,
+        book: Option<&str>,
+        offset: usize,
+        filters: &VerseFilters,
+    ) -> Result<VersePage, String> {
         let (start, end) = match book {
             None => (0, self.manifest.total),
             Some(book) => *self
@@ -328,10 +349,15 @@ impl PreparedVerses {
                 .get(book)
                 .ok_or_else(|| format!("Book not found: {book}"))?,
         };
-        let total = end - start;
-        let entries = self.manifest.entries
-            [start + offset.min(total)..start + offset.saturating_add(PAGE_SIZE).min(total)]
-            .iter()
+        let matches = || {
+            self.manifest.entries[start..end]
+                .iter()
+                .filter(|entry| filters.matches(&entry.summary))
+        };
+        let total = matches().count();
+        let entries = matches()
+            .skip(offset)
+            .take(PAGE_SIZE)
             .map(|entry| entry.summary.clone())
             .collect();
         Ok(VersePage { total, entries })
@@ -676,6 +702,43 @@ mod tests {
         phrases.prepare_verses(&bible).unwrap();
         let verses = PreparedVerses::open(&root.join("pack"), &bible, &phrases).unwrap();
         assert_eq!(verses.page(None, 0).unwrap().total, 3);
+        let filters = VerseFilters {
+            words: Some(5),
+            letters: Some(11),
+            phrases: Some(9),
+        };
+        let filtered = verses.page_filtered(None, 0, &filters).unwrap();
+        assert_eq!(filtered.total, 1);
+        assert_eq!(filtered.entries[0].verse.number, 1);
+        assert_eq!(
+            verses
+                .page_filtered(Some("Exodus"), 0, &filters)
+                .unwrap()
+                .total,
+            0
+        );
+        assert!(verses
+            .page_filtered(None, 1, &filters)
+            .unwrap()
+            .entries
+            .is_empty());
+        assert_eq!(
+            verses
+                .page_filtered(
+                    None,
+                    0,
+                    &VerseFilters {
+                        phrases: Some(2294),
+                        ..Default::default()
+                    }
+                )
+                .unwrap()
+                .entries[0]
+                .verse
+                .number,
+            2
+        );
+
         assert_eq!(verses.page(Some("Exodus"), 0).unwrap().total, 1);
         assert!(verses.page(None, usize::MAX).unwrap().entries.is_empty());
         assert!(verses.page(Some("Missing"), 0).is_err());

@@ -1,3 +1,4 @@
+import { numberFixture } from "./number-fixture.mjs";
 import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -38,6 +39,7 @@ const tokenize = (text) =>
     .map((word) => word.replace(/^'+|'+$/g, "").toLowerCase())
     .filter(Boolean);
 const wordCatalogue = wordFixture(corpus, tokenize);
+const numberCatalogue = numberFixture(wordCatalogue);
 const phraseCatalogue = phraseFixture(corpus, tokenize, wordCatalogue);
 const verseCatalogue = verseFixture(corpus, tokenize, wordCatalogue);
 const tokenLines = corpus.map((verse) => ({
@@ -184,7 +186,11 @@ window.__TAURI__ = {
       if (command === "reader_highlights")
         return chapterHighlights(String(args.book), Number(args.chapter));
       if (command === "verse_list")
-        return verseCatalogue.list(args.book, Number(args.offset));
+        return verseCatalogue.list(
+          args.book,
+          Number(args.offset),
+          args.filters,
+        );
       if (command === "verse_details") {
         const query = args.query;
         if (query.sort?.field !== "phrase") await pause(10);
@@ -196,6 +202,10 @@ window.__TAURI__ = {
           query.sort,
         );
       }
+      if (command === "number_list")
+        return numberCatalogue.list(Number(args.offset));
+      if (command === "number_words")
+        return numberCatalogue.words(Number(args.number), Number(args.offset));
       if (command === "word_list")
         return wordCatalogue.list(
           String(args.text),
@@ -756,6 +766,77 @@ assert.equal(
 change("#verses-book", "John");
 await pause(30);
 assert.equal(find(".verse-row strong").textContent, "John 1:1");
+// Header-selected counts combine, persist while paging, and remain editable with no matches.
+change("#verses-book", "");
+await pause(30);
+const submitVerseFilters = () =>
+  find("#verses-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+find('[data-verse-filter="words"]').click();
+assert.ok(!find("#verse-words-filter").closest("label").hidden);
+find("#verse-words-filter").value = "10";
+submitVerseFilters();
+await pause(30);
+const tenWords = verseCatalogue.list(null, 0, { words: 10 });
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-row strong")].map(
+    (node) => node.textContent,
+  ),
+  tenWords.entries.map(
+    (entry) =>
+      `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+  ),
+);
+assert.ok(tenWords.total > 50);
+find('[data-action="verses-next"]').click();
+await pause(30);
+assert.equal(find("#verse-words-filter").value, "10");
+assert.deepEqual(
+  [...window.document.querySelectorAll(".verse-row strong")].map(
+    (node) => node.textContent,
+  ),
+  verseCatalogue
+    .list(null, 50, { words: 10 })
+    .entries.map(
+      (entry) =>
+        `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+    ),
+);
+find('[data-verse-filter="letters"]').click();
+find("#verse-letters-filter").value = "44";
+find('[data-verse-filter="phrases"]').click();
+assert.equal(find("#verse-letters-filter").value, "44");
+find("#verse-phrases-filter").value = "45";
+submitVerseFilters();
+await pause(30);
+assert.ok(
+  [...window.document.querySelectorAll(".verse-row")].every(
+    (row) =>
+      Number(row.children[1].textContent) === 10 &&
+      Number(row.children[2].textContent) === 44 &&
+      Number(row.children[3].textContent) === 45,
+  ),
+);
+change("#verses-book", "Genesis");
+await pause(30);
+assert.equal(find(".verse-row strong").textContent, "Genesis 1:1");
+find(".verse-row").click();
+await pause(30);
+find('.verse-detail-page [data-page="verses"]').click();
+await pause(30);
+assert.equal(find("#verse-phrases-filter").value, "45");
+find("#verse-phrases-filter").value = "999999";
+submitVerseFilters();
+await pause(30);
+assert.match(find(".notice").textContent, /No verses match/);
+assert.ok(find('[data-verse-filter="phrases"]'));
+for (const field of ["words", "letters", "phrases"])
+  find(`#verse-${field}-filter`).value = "";
+submitVerseFilters();
+await pause(30);
+assert.equal(window.document.querySelectorAll(".verse-row").length, 50);
+
 find('nav [data-page="reader"]').click();
 find("#verse-2").click();
 await pause(30);
@@ -1738,6 +1819,271 @@ assert.deepEqual(
 find('[data-action="phrase-verses-previous"]').click();
 await pause(30);
 assert.ok(find('[data-action="phrase-verses-previous"]').disabled);
+// Search anywhere in persisted phrases, combine counts, page, and return from details.
+savedLengths.clear();
+exclusiveSaved.clear();
+const searchCandidates = new Map();
+for (const line of tokenLines)
+  for (let i = 0; i + 2 <= line.tokens.length; i++) {
+    const phrase = line.tokens.slice(i, i + 2).join(" ");
+    if (phrase.includes("god")) searchCandidates.set(phrase, {});
+  }
+savedLengths.set("[2,null]", searchCandidates);
+find('nav [data-page="phrases"]').click();
+await pause(30);
+for (const field of ["words", "letters", "occurrences", "books"])
+  find(`#phrase-${field}-filter`).value = "";
+find("#phrase-search").value = "GOD,";
+submitPhrases();
+await pause(30);
+const expectedSearch = (text, partial = false, offset = 0, counts = {}) =>
+  phraseCatalogue.list(savedLengths, exclusiveSaved, offset, {
+    text,
+    partial,
+    ...counts,
+  });
+assert.ok(expectedSearch("GOD,").total > 50);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("GOD,").entries.map((e) => e.phrase),
+);
+find('[data-action="saved-phrases-next"]').click();
+await pause(30);
+assert.equal(find("#phrase-search").value, "GOD,");
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("GOD,", false, 50).entries.map((e) => e.phrase),
+);
+find(".phrase-row").click();
+await pause(30);
+find('[data-page="phrases"]').click();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("GOD,", false, 50).entries.map((e) => e.phrase),
+);
+find("#phrase-search").value = "god";
+find("#phrase-partial").checked = true;
+submitPhrases();
+await pause(30);
+assert.ok(expectedSearch("god", true).total > expectedSearch("god").total);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("god", true).entries.map((e) => e.phrase),
+);
+const searchCount = expectedSearch("god", true).entries[0].occurrences;
+find('[data-phrase-filter="occurrences"]').click();
+assert.equal(find("#phrase-search").value, "god");
+assert.equal(find("#phrase-partial").checked, true);
+find("#phrase-occurrences-filter").value = String(searchCount);
+submitPhrases();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("god", true, 0, { occurrences: searchCount }).entries.map(
+    (e) => e.phrase,
+  ),
+);
+find("#phrase-search").value = "xyzmissing";
+submitPhrases();
+await pause(30);
+assert.match(find(".phrases-page .notice").textContent, /No phrases match/);
+find("#phrase-search").value = "";
+find("#phrase-partial").checked = false;
+find("#phrase-occurrences-filter").value = "";
+submitPhrases();
+await pause(30);
+assert.deepEqual(
+  displayedSavedPhrases(),
+  expectedSearch("").entries.map((e) => e.phrase),
+);
+// Keep a manageable independent phrase sample with enough matches for paging.
+const numberPhraseCounts = new Map();
+for (const line of tokenLines)
+  for (let i = 0; i + 2 <= line.tokens.length; i++) {
+    const phrase = line.tokens.slice(i, i + 2).join(" ");
+    numberPhraseCounts.set(phrase, (numberPhraseCounts.get(phrase) ?? 0) + 1);
+  }
+savedLengths.clear();
+exclusiveSaved.clear();
+savedLengths.set(
+  "[2,null]",
+  new Map(
+    [...numberPhraseCounts].filter(([, count]) => count === 22).slice(0, 65),
+  ),
+);
+// Numbers catalogue uses numeric order; profiles paginate all exact-frequency words.
+find('nav [data-page="numbers"]').click();
+await pause(30);
+const shownNumbers = () =>
+  [...window.document.querySelectorAll(".number-row")].map((row) =>
+    Number(row.dataset.number),
+  );
+assert.deepEqual(
+  shownNumbers(),
+  numberCatalogue.list().entries.map((entry) => entry.number),
+);
+assert.equal(find(".number-row").dataset.number, "1");
+find('[data-action="numbers-next"]').click();
+await pause(30);
+assert.deepEqual(
+  shownNumbers(),
+  numberCatalogue.list(50).entries.map((entry) => entry.number),
+);
+const openNumber = async (number) => {
+  find("#number-input").value = String(number);
+  find("#numbers-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await pause(30);
+};
+await openNumber(1);
+const shownNumberWords = () =>
+  [...window.document.querySelectorAll(".number-detail-page .word-row")].map(
+    (row) => row.dataset.word,
+  );
+assert.deepEqual(
+  shownNumberWords(),
+  numberCatalogue.words(1).entries.map((entry) => entry.word),
+);
+assert.ok(numberCatalogue.words(1).total > 50);
+find('[data-action="number-words-next"]').click();
+await pause(30);
+assert.deepEqual(
+  shownNumberWords(),
+  numberCatalogue.words(1, 50).entries.map((entry) => entry.word),
+);
+const chosenWord = shownNumberWords()[0];
+find(".number-detail-page .word-row").click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, chosenWord);
+find("[data-number-return]").click();
+await pause(30);
+assert.deepEqual(
+  shownNumberWords(),
+  numberCatalogue.words(1, 50).entries.map((entry) => entry.word),
+);
+find('[data-page="numbers"]').click();
+await pause(30);
+await openNumber(22);
+assert.deepEqual(
+  shownNumberWords(),
+  numberCatalogue.words(22).entries.map((entry) => entry.word),
+);
+const shownNumberPhrases = () =>
+  [
+    ...window.document.querySelectorAll(".number-phrases-section .phrase-row"),
+  ].map((row) => row.dataset.savedPhrase);
+const expectedNumberPhrases = (offset) =>
+  phraseCatalogue.list(savedLengths, exclusiveSaved, offset, {
+    occurrences: 22,
+  });
+assert.ok(expectedNumberPhrases(0).total > 50);
+assert.deepEqual(
+  shownNumberPhrases(),
+  expectedNumberPhrases(0).entries.map((entry) => entry.phrase),
+);
+const numberMain = find("main");
+numberMain.scrollTop = 3600;
+find('[data-action="number-phrases-next"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 3600);
+assert.deepEqual(
+  shownNumberPhrases(),
+  expectedNumberPhrases(50).entries.map((entry) => entry.phrase),
+);
+assert.deepEqual(
+  shownNumberWords(),
+  numberCatalogue.words(22).entries.map((entry) => entry.word),
+);
+const numberPhrase = shownNumberPhrases()[0];
+find(".number-phrases-section .phrase-row").click();
+await pause(30);
+assert.equal(find(".phrase-detail-page h1").textContent, numberPhrase);
+find("[data-number-return]").click();
+await pause(30);
+assert.deepEqual(
+  shownNumberPhrases(),
+  expectedNumberPhrases(50).entries.map((entry) => entry.phrase),
+);
+find('[data-page="numbers"]').click();
+await pause(30);
+await openNumber(100);
+const expectedNumberVerses = (offset) =>
+  verseCatalogue.list(null, offset, { letters: 100 });
+const shownNumberVerses = () =>
+  [
+    ...window.document.querySelectorAll(".number-verses-section .verse-row"),
+  ].map(
+    (row) => `${row.dataset.book} ${row.dataset.chapter}:${row.dataset.verse}`,
+  );
+const refs = (page) =>
+  page.entries.map(
+    (entry) =>
+      `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+  );
+assert.ok(expectedNumberVerses(0).total > 50);
+assert.deepEqual(shownNumberVerses(), refs(expectedNumberVerses(0)));
+find("main").scrollTop = 7200;
+find('[data-action="number-verses-next"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 7200);
+assert.deepEqual(shownNumberVerses(), refs(expectedNumberVerses(50)));
+const numberVerse = expectedNumberVerses(50).entries[0];
+find(".number-verses-section .verse-row").click();
+await pause(30);
+assert.equal(
+  find(".verse-detail-page h1").textContent,
+  refs({ entries: [numberVerse] })[0],
+);
+assert.equal(
+  Number(
+    window.document.querySelectorAll(
+      ".verse-detail-page .book-statistics dd",
+    )[1].textContent,
+  ),
+  100,
+);
+find("[data-number-return]").click();
+await pause(30);
+assert.deepEqual(shownNumberVerses(), refs(expectedNumberVerses(50)));
+find('[data-page="numbers"]').click();
+await pause(30);
+await openNumber(22);
+const numberWord = shownNumberWords()[0];
+const numberWordDetail = wordCatalogue.detail(numberWord);
+for (const [index, number] of [
+  numberWordDetail.count,
+  numberWordDetail.books.length,
+  numberWordDetail.letters,
+].entries()) {
+  find(".number-detail-page .word-row").click();
+  await pause(30);
+  const links = window.document.querySelectorAll(
+    ".word-detail-page .number-stat-link",
+  );
+  assert.equal(Number(links[index].dataset.number), number);
+  links[index].click();
+  await pause(30);
+  assert.equal(
+    find(".number-detail-page h1").textContent,
+    number.toLocaleString(),
+  );
+  assert.deepEqual(
+    shownNumberWords(),
+    numberCatalogue.words(number).entries.map((entry) => entry.word),
+  );
+  find('[data-page="numbers"]').click();
+  await pause(30);
+  await openNumber(22);
+}
+find('[data-page="numbers"]').click();
+await pause(30);
+await openNumber(999999);
+assert.match(
+  find(".number-detail-page .notice").textContent,
+  /No words appear exactly/,
+);
 find('[data-page="search"]').click();
 window.__TAURI__.core.invoke = async () => {
   throw new Error("Transport unavailable");

@@ -31,6 +31,7 @@ pub struct WordPage {
 #[derive(Serialize, Deserialize)]
 pub struct WordStatistics(BTreeMap<String, WordDetail>);
 impl WordStatistics {
+    pub fn entries(&self) -> impl Iterator<Item = &WordDetail> { self.0.values() }
     pub fn find_normalized(&self,word:&str)->Option<&WordDetail>{self.0.get(word)}
     pub fn new(bible: &Bible) -> Self {
         let mut entries = BTreeMap::<String, WordDetail>::new();

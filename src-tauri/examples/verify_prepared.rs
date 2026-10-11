@@ -20,6 +20,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bible = Bible::bundled()?;
     let store = PreparedPhrases::open(&root, &bible)?;
     let words: WordStatistics = serde_json::from_reader(File::open(root.join("words.json"))?)?;
+    let numbers: kjv_reader_lib::number_stats::NumberStatistics = serde_json::from_reader(File::open(root.join("numbers.json"))?)?;
+    for number in [1,22,66,63919,999999] {
+        let expected = words.list_filtered("",0,None,Some(number));
+        let before = Instant::now();
+        let actual = numbers.words(number,0);
+        println!("Number {number}: {:?}; {} words",before.elapsed(),actual.total);
+        assert_eq!(serde_json::to_value(actual)?,serde_json::to_value(expected)?);
+    }
     let books: BookStatistics = serde_json::from_reader(File::open(root.join("books.json"))?)?;
     assert_eq!(
         words.get("god")?.count,
@@ -66,8 +74,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_value(expected)?
         );
     }
+    for (text,partial) in [("in the beginning",false),("god",false),("god",true)] {
+        let filters=PhraseFilters {text:Some(text.into()),partial,..Default::default()};
+        let before=Instant::now();
+        let page=store.page(0,&filters)?;
+        println!("Search {text:?}, partial={partial}: {:?}; {} phrases",before.elapsed(),page.total);
+        assert!(page.total>50);
+        let query=kjv_reader_lib::text::words(text);
+        for entry in &page.entries {
+            let tokens=kjv_reader_lib::text::words(&entry.phrase);
+            assert!(tokens.windows(query.len()).any(|window|window.iter().zip(&query).all(|(word,term)|if partial {word.contains(term)} else {word==term})));
+        }
+        let before=Instant::now();
+        let later=store.page(50,&filters)?;
+        println!("Cached search page: {:?}",before.elapsed());
+        assert_eq!(later.total,page.total);
+        assert!(page.entries.last().unwrap().phrase < later.entries[0].phrase);
+    }
+    let numeric_phrases = store.page(0,&PhraseFilters {occurrences:Some(22),..Default::default()})?;
+    assert!(numeric_phrases.total > 50);
+    for entry in &numeric_phrases.entries {
+        assert_eq!(entry.occurrences,22);
+        assert_eq!(phrase_stats::details(&bible,&entry.phrase,0)?.occurrences,22);
+    }
+    let later_phrases = store.page(50,&PhraseFilters {occurrences:Some(22),..Default::default()})?;
+    assert!(numeric_phrases.entries.last().unwrap().phrase < later_phrases.entries[0].phrase);
+    println!("Number 22: {} persisted phrases",numeric_phrases.total);
     let verses = PreparedVerses::open(&root, &bible, &store)?;
     assert_eq!(verses.page(None, 0)?.total, 31_102);
+    for letters in [22,44,100,999999] {
+        let page = verses.page_filtered(None,0,&kjv_reader_lib::occurrences::prepared::VerseFilters {letters:Some(letters),..Default::default()})?;
+        let expected = bible.passages().filter(|(_,text)|text.chars().filter(|c|c.is_alphabetic()).count()==letters).count();
+        assert_eq!(page.total,expected);
+        assert!(page.entries.iter().all(|entry|entry.letters==letters));
+        println!("Number {letters}: {} verses with that letter count",page.total);
+    }
+
     for (book, chapter, number) in [
         ("Genesis", 1, 1),
         ("Genesis", 1, 2),

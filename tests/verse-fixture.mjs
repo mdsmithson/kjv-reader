@@ -26,9 +26,16 @@ export const verseFixture = (corpus, tokenize, wordCatalogue) => {
     return summaries.get(key(line.verse));
   };
   return {
-    list: (book, offset) => {
+    list: (book, offset, filters = {}) => {
       const matches = lines.filter(
-        (line) => book == null || line.verse.book === book,
+        (line) =>
+          (book == null || line.verse.book === book) &&
+          (filters.words == null || line.tokens.length === filters.words) &&
+          (filters.letters == null ||
+            (line.verse.text.match(/\p{Alphabetic}/gu) ?? []).length ===
+              filters.letters) &&
+          (filters.phrases == null ||
+            summary(line).phrases === filters.phrases),
       );
       return {
         total: matches.length,

@@ -10,6 +10,9 @@ pub struct PhraseFilters {
     pub letters: Option<u32>,
     pub occurrences: Option<u32>,
     pub books: Option<u16>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub partial: bool,
 }
 impl PhraseFilters {
     fn matches(&self, entry: &SavedPhrase) -> bool {
@@ -19,6 +22,12 @@ impl PhraseFilters {
                 .occurrences
                 .is_none_or(|value| entry.occurrences == value)
             && self.books.is_none_or(|value| entry.books == value)
+            && self.text.as_ref().is_none_or(|text| {
+                if text.trim().is_empty() { return true; }
+                let query = crate::text::words(text);
+                let tokens = crate::text::words(&entry.phrase);
+                !query.is_empty() && tokens.windows(query.len()).any(|window| window.iter().zip(&query).all(|(word,term)| if self.partial { word.contains(term) } else { word == term }))
+            })
     }
 }
 
@@ -464,6 +473,7 @@ mod tests {
             letters: Some(8),
             occurrences: Some(1),
             books: Some(1),
+            ..Default::default()
         };
         let mut filtered_phrases = Vec::new();
         for offset in [0, 50, 100] {
@@ -515,6 +525,7 @@ mod tests {
             letters: Some(2),
             occurrences: Some(3),
             books: Some(2),
+            ..Default::default()
         };
         let page = index.saved_phrases_filtered(0, &filters).unwrap();
         assert_eq!(page.total, 1);

@@ -1,12 +1,13 @@
 //! Read-only, build-time phrase data: fixed records, verse postings and metadata groups.
 use super::*;
 mod verses;
+mod search;
 use crate::{bible::Bible, phrase_stats::PhraseDetail};
 use catalogue::{PhraseFilters, SavedPhrase, SavedPhrasePage};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::io::BufReader;
-pub use verses::{PreparedVerses, VerseDetail, VersePage, VerseWord};
+pub use verses::{PreparedVerses, VerseDetail, VersePage, VerseWord, VerseFilters};
 
 const FORMAT: u32 = 1;
 const RECORD_SIZE: u64 = 32;
@@ -110,6 +111,8 @@ pub struct PreparedPhrases {
     tokens: Vec<u32>,
     ids: Vec<u32>,
     children: Vec<u32>,
+    search_spans: Vec<u32>,
+    search_cache: Mutex<Vec<(String, Arc<Vec<u32>>)>>,
     contents_cache: Mutex<HashMap<String, PhraseContents>>,
 }
 impl PreparedPhrases {
@@ -131,6 +134,7 @@ impl PreparedPhrases {
         }
         let tokens = u32_file(&root.join("tokens.bin"))?;
         let ids = u32_file(&root.join("groups.bin"))?;
+        let search_spans = search::read_spans(root, &manifest, &tokens)?;
         let children = u32_file(&root.join("phrase-children.bin"))?;
         let child_header: ChildrenHeader = read_json(&root.join("phrase-children.json"))?;
         if child_header.format != 1
@@ -162,6 +166,8 @@ impl PreparedPhrases {
             tokens,
             ids,
             children,
+            search_spans,
+            search_cache: Mutex::new(Vec::new()),
             contents_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -198,6 +204,9 @@ impl PreparedPhrases {
             .map_err(|e| format!("Unable to read prepared phrases: {e}"))
     }
     fn read_page(&self, offset: usize, filters: &PhraseFilters) -> io::Result<SavedPhrasePage> {
+        if let Some(text) = filters.text.as_ref().filter(|text| !text.trim().is_empty()) {
+            return self.search_page(text, filters.partial, offset, filters);
+        }
         let unfiltered = filters.words.is_none()
             && filters.letters.is_none()
             && filters.occurrences.is_none()
@@ -549,6 +558,7 @@ impl OccurrenceIndex {
     pub fn prepare_phrases(&self, destination: &Path, maximum_words: u16) -> Result<(), String> {
         self.prepare(destination, maximum_words)
             .and_then(|_| prepare_children(destination))
+            .and_then(|_| search::prepare(destination))
             .map_err(|e| format!("Unable to prepare phrase data: {e}"))
     }
     fn prepare(&self, destination: &Path, maximum_words: u16) -> io::Result<()> {
@@ -870,6 +880,7 @@ mod tests {
                 letters: Some(5),
                 occurrences: Some(1),
                 books: Some(1),
+                ..Default::default()
             },
         ] {
             let expected: Vec<_> = oracle

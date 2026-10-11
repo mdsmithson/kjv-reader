@@ -74,7 +74,7 @@ pub fn phrase_details(phrase:String,offset:usize,bible:tauri::State<'_,Bible>,ph
 }
 
 #[tauri::command]
-pub fn verse_list(book: Option<String>, offset: usize, verses: tauri::State<'_, crate::occurrences::prepared::PreparedVerses>) -> Result<crate::occurrences::prepared::VersePage,String> { verses.page(book.as_deref(),offset) }
+pub fn verse_list(book: Option<String>, offset: usize, filters:Option<crate::occurrences::prepared::VerseFilters>, verses: tauri::State<'_, crate::occurrences::prepared::PreparedVerses>) -> Result<crate::occurrences::prepared::VersePage,String> { verses.page_filtered(book.as_deref(),offset,&filters.unwrap_or_default()) }
 #[derive(serde::Deserialize)]
 pub struct VerseDetailQuery { book:String, chapter:u16, verse:u16, offset:usize, sort:Option<crate::detail_lists::PhraseSort> }
 #[tauri::command]
@@ -88,3 +88,8 @@ pub fn verse_details(query:VerseDetailQuery,verses:tauri::State<'_,crate::occurr
 pub fn reader_highlights(book:String,chapter:u16,verses:tauri::State<'_,crate::occurrences::prepared::PreparedVerses>,phrases:tauri::State<'_,Arc<crate::occurrences::prepared::PreparedPhrases>>,statistics:tauri::State<'_,crate::word_stats::WordStatistics>,books:tauri::State<'_,crate::book_stats::BookStatistics>)->Result<crate::reader_highlights::ChapterHighlights,String> {
     verses.highlights(&phrases,&statistics,&books,&book,chapter)
 }
+
+#[tauri::command]
+pub fn number_list(offset:usize, statistics:tauri::State<'_,crate::number_stats::NumberStatistics>)->crate::number_stats::NumberPage { statistics.list(offset) }
+#[tauri::command]
+pub fn number_words(number:usize, offset:usize, statistics:tauri::State<'_,crate::number_stats::NumberStatistics>)->crate::word_stats::WordPage { statistics.words(number,offset) }
