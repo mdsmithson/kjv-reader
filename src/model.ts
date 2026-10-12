@@ -174,6 +174,7 @@ export type Query = Readonly<{
 export type OccurrenceQuery = Readonly<{
   count: number;
   countUpTo?: boolean;
+  anyCount?: boolean;
   anyLength?: boolean;
   words: number;
   upTo: boolean;
@@ -182,12 +183,15 @@ export type OccurrenceQuery = Readonly<{
   booksUpTo?: boolean;
   letters?: number | null;
   lettersUpTo?: boolean;
+  chapters?: number | null;
+  everyChapter?: boolean;
   consecutiveVerses?: number | null;
   consecutiveChapters?: number | null;
   chapterFrequency?: number | null;
   includedBooks?: readonly string[] | null;
 }>;
 export type PhraseCount = Readonly<{
+  chapters: number;
   phrase: string;
   words: number;
   count: number;
@@ -276,6 +280,9 @@ export type State = Readonly<{
   phraseLength: number;
   phraseOffset: number;
   exclusivePhrases: ExclusivePhrasePage | null;
+  multiBookMode: boolean;
+  statisticsBooks: readonly string[];
+  combinedStatistics: BookStats | null;
   statistics: BookStats | null;
   statisticsBook: string;
   statisticsChapter: number;
@@ -373,6 +380,8 @@ export type Action =
   | { type: "exclusive-phrase-query"; length: number; offset: number }
   | { type: "exclusive-phrases"; results: ExclusivePhrasePage }
   | { type: "exclusive-offset"; offset: number }
+  | { type: "statistics-selection"; books: readonly string[]; enabled: boolean }
+  | { type: "combined-statistics"; statistics: BookStats }
   | { type: "statistics-book"; book: string }
   | { type: "statistics"; statistics: BookStats }
   | { type: "catalog"; books: readonly Book[] }
@@ -447,6 +456,9 @@ export const initialState: State = {
   phraseLength: 1,
   phraseOffset: 0,
   exclusivePhrases: null,
+  multiBookMode: false,
+  statisticsBooks: ["Genesis"],
+  combinedStatistics: null,
   statistics: null,
   statisticsBook: "Genesis",
   statisticsChapter: 1,
@@ -748,10 +760,32 @@ export const reduce = (state: State, action: Action): State => {
 
     case "exclusive-offset":
       return { ...state, exclusiveOffset: Math.max(0, action.offset) };
+    case "statistics-selection":
+      return {
+        ...state,
+        page: "books",
+        multiBookMode: action.enabled,
+        statisticsBooks: action.books,
+        combinedStatistics: null,
+        exclusiveOffset: 0,
+        busy: action.enabled && action.books.length > 0,
+        error: null,
+      };
+    case "combined-statistics":
+      return {
+        ...state,
+        combinedStatistics: action.statistics,
+        busy: false,
+        error: null,
+      };
     case "statistics-book":
       return {
         ...state,
         statisticsBook: action.book,
+        statisticsBooks:
+          state.statisticsBooks.length > 1
+            ? state.statisticsBooks
+            : [action.book],
         statisticsChapter: 1,
         exclusiveOffset: 0,
         phraseCounts: Array.from({ length: 32 }, () => null),

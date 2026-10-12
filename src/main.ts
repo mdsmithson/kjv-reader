@@ -293,6 +293,37 @@ const statistics = async (book: string) => {
   if (loaded) void phraseCounts(book, token);
 };
 
+const combinedBookCache = new Map<string, import("./model").BookStats>();
+const multipleStatistics = async (
+  books = state.statisticsBooks,
+  enabled = true,
+) => {
+  ++countRequest;
+  ++request;
+  dispatch({ type: "statistics-selection", books, enabled }, true);
+  if (!enabled) {
+    await statistics(state.statisticsBook);
+    return;
+  }
+  if (!books.length) return;
+  const key = JSON.stringify([...books].sort());
+  await load(
+    async () => {
+      const cached = combinedBookCache.get(key);
+      if (cached) return cached;
+      const result = await api.booksStats(books);
+      if (combinedBookCache.size >= 16)
+        combinedBookCache.delete(combinedBookCache.keys().next().value!);
+      combinedBookCache.set(key, result);
+      return result;
+    },
+    (statistics) => ({ type: "combined-statistics", statistics }),
+    true,
+  );
+};
+const refreshBookStatistics = () =>
+  state.multiBookMode ? multipleStatistics() : statistics(state.statisticsBook);
+
 const wordList = async (
   text = state.wordText,
   offset = state.wordOffset,
@@ -470,6 +501,40 @@ root.addEventListener("click", (event) => {
     "button",
   );
   if (!button || button.disabled) return;
+  if (
+    button.dataset.action === "books-select-all" ||
+    button.dataset.action === "books-select-none"
+  ) {
+    void multipleStatistics(
+      button.dataset.action === "books-select-all"
+        ? state.books.map((book) => book.name)
+        : [],
+    );
+    return;
+  }
+  if (button.dataset.action === "occurrence-copy") {
+    const query = state.occurrenceQuery;
+    const total = state.occurrences?.total ?? 0;
+    const status = root.querySelector<HTMLElement>("#occurrence-copy-status");
+    button.disabled = true;
+    button.textContent = "Copying…";
+    if (status) status.textContent = "Preparing all matching results…";
+    void api
+      .copyOccurrenceData(query)
+      .then(() => {
+        if (status?.isConnected)
+          status.textContent = `Copied ${total.toLocaleString()} words and phrases as CSV.`;
+      })
+      .catch(() => {
+        if (status?.isConnected)
+          status.textContent = "Unable to copy data. Please try again.";
+      })
+      .finally(() => {
+        button.disabled = false;
+        button.textContent = "Copy data";
+      });
+    return;
+  }
   if (button.dataset.action === "highlight-add") {
     if (state.readerHighlightOptions.length >= 10) return;
     updateReaderHighlights();
@@ -523,7 +588,7 @@ root.addEventListener("click", (event) => {
     if (state.page === "verses") void verseList();
     if (state.page === "phrases") void savedPhrases();
     if (state.page === "words") void wordList();
-    if (state.page === "books") void statistics(state.statisticsBook);
+    if (state.page === "books") void refreshBookStatistics();
     if (state.page === "search")
       root.querySelector<HTMLInputElement>("#query")?.focus();
     return;
@@ -915,7 +980,7 @@ root.addEventListener("click", (event) => {
         void occurrences(state.occurrenceQuery);
       else if (state.page === "book-phrases")
         void exclusivePhrases(state.phraseLength, state.phraseOffset);
-      else if (state.page === "books") void statistics(state.statisticsBook);
+      else if (state.page === "books") void refreshBookStatistics();
       else void initialize();
       break;
     case "occurrence-previous":
@@ -944,9 +1009,26 @@ root.addEventListener("input", (event) => {
 });
 
 root.addEventListener("change", (event) => {
-  const control = event.target as HTMLSelectElement;
+  const control = event.target as HTMLSelectElement | HTMLInputElement;
   if (control.closest("#reader-highlights-form")) {
     updateReaderHighlights(control);
+    return;
+  }
+  if (control.id === "books-multiple") {
+    void multipleStatistics(
+      state.statisticsBooks,
+      (control as HTMLInputElement).checked,
+    );
+    return;
+  }
+  if (control.dataset.statisticsSelected) {
+    const books = Array.from(
+      root.querySelectorAll<HTMLInputElement>(
+        "input[data-statistics-selected]:checked",
+      ),
+      (input) => input.dataset.statisticsSelected!,
+    );
+    void multipleStatistics(books);
     return;
   }
   if (control.id === "verses-book") {
@@ -1075,7 +1157,11 @@ root.addEventListener("submit", (event) => {
       return;
     }
     void occurrences({
-      count: Number(data.get("count")),
+      count:
+        Number(
+          form.querySelector<HTMLInputElement>("#occurrence-count")?.value,
+        ) || state.occurrenceQuery.count,
+      anyCount: data.get("countMode") === "any",
       countUpTo: data.get("countMode") === "upTo",
       words:
         Number(
@@ -1091,6 +1177,13 @@ root.addEventListener("submit", (event) => {
       letters:
         data.get("letterMode") === "any" ? null : Number(data.get("letters")),
       lettersUpTo: data.get("letterMode") === "upTo",
+      chapters:
+        data.get("chaptersMode") === "any"
+          ? null
+          : data.get("chaptersMode") === "every"
+            ? state.books.reduce((sum, book) => sum + book.chapters, 0)
+            : Number(data.get("chapters")),
+      everyChapter: data.get("chaptersMode") === "every",
       consecutiveVerses:
         data.get("consecutiveVersesMode") === "any"
           ? null

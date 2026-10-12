@@ -11,6 +11,7 @@ pub struct Spatial {
     last: Option<Position>,
     verse_run: u16,
     chapter_run: u16,
+    pub chapters: u32,
     pub max_verse_run: u16,
     pub max_chapter_run: u16,
     current_chapter_count: u32,
@@ -30,6 +31,7 @@ impl Spatial {
             self.max_verse_run = self.max_verse_run.max(self.verse_run);
         }
         if !same_chapter {
+            self.chapters += 1;
             if self.current_chapter_count > 0 {
                 self.chapter_frequencies.push(self.current_chapter_count);
             }

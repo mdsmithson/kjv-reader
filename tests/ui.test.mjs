@@ -76,6 +76,7 @@ for (const line of tokenLines) {
 const savedLengths = new Map();
 const letterCount = (text) => (text.match(/\p{Alphabetic}/gu) ?? []).length;
 const occurrenceRequests = [];
+const bookGroupRequests = [];
 const exclusiveRequests = [];
 const exclusiveSaved = new Map();
 
@@ -302,15 +303,17 @@ window.__TAURI__ = {
               entries: entries.slice(args.offset, args.offset + 50),
             };
       }
-      if (command === "book_stats") {
-        const lines = corpus.filter((verse) => verse.book === args.book);
+      if (command === "book_stats" || command === "books_stats") {
+        if (command === "books_stats") bookGroupRequests.push(args.books);
+        const selected = command === "books_stats" ? args.books : [args.book];
+        const lines = corpus.filter((verse) => selected.includes(verse.book));
         const counts = new Map();
         lines
           .flatMap((verse) => tokenize(verse.text))
           .forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
         const outside = new Set(
           corpus
-            .filter((verse) => verse.book !== args.book)
+            .filter((verse) => !selected.includes(verse.book))
             .flatMap((verse) => tokenize(verse.text)),
         );
         const leaders = (entries) => {
@@ -321,30 +324,40 @@ window.__TAURI__ = {
             .map(([word, count]) => ({ word, count }));
         };
         return {
-          name: args.book,
-          chapters: Array.from(
-            { length: books.find((book) => book.name === args.book).chapters },
-            (_, index) => {
-              const tokens = lines
-                .filter((verse) => verse.chapter === index + 1)
-                .flatMap((verse) => tokenize(verse.text));
-              const unique = new Set(tokens);
-              return {
-                chapter: index + 1,
-                words: tokens.length,
-                uniqueWords: unique.size,
-                exclusiveWords: [...unique]
-                  .filter((word) => chapterWordOwners.get(word).size === 1)
-                  .map((word) => ({
-                    word,
-                    count: tokens.filter((token) => token === word).length,
-                  }))
-                  .sort(
-                    (a, b) => b.count - a.count || a.word.localeCompare(b.word),
-                  ),
-              };
-            },
-          ),
+          name: selected.join(", "),
+          chapters:
+            command === "books_stats"
+              ? []
+              : Array.from(
+                  {
+                    length: books.find((book) => book.name === args.book)
+                      .chapters,
+                  },
+                  (_, index) => {
+                    const tokens = lines
+                      .filter((verse) => verse.chapter === index + 1)
+                      .flatMap((verse) => tokenize(verse.text));
+                    const unique = new Set(tokens);
+                    return {
+                      chapter: index + 1,
+                      words: tokens.length,
+                      uniqueWords: unique.size,
+                      exclusiveWords: [...unique]
+                        .filter(
+                          (word) => chapterWordOwners.get(word).size === 1,
+                        )
+                        .map((word) => ({
+                          word,
+                          count: tokens.filter((token) => token === word)
+                            .length,
+                        }))
+                        .sort(
+                          (a, b) =>
+                            b.count - a.count || a.word.localeCompare(b.word),
+                        ),
+                    };
+                  },
+                ),
           words: [...counts.values()].reduce((a, b) => a + b, 0),
           uniqueWords: counts.size,
           verses: lines.length,
@@ -398,9 +411,14 @@ window.__TAURI__ = {
           verses: verses.slice(query.offset, query.offset + 50),
         };
       }
-      if (command === "occurrences") {
+      if (command === "copy_occurrence_csv") {
+        const csv = await window.__TAURI__.core.invoke("occurrence_csv", args);
+        await window.navigator.clipboard.writeText(csv);
+        return;
+      }
+      if (command === "occurrences" || command === "occurrence_csv") {
         const query = args.query;
-        occurrenceRequests.push(query);
+        if (command === "occurrences") occurrenceRequests.push(query);
         if (query.anyLength) {
           // A real verse keeps the all-length transport fixture small; Rust
           // verifies the engine's full supported range independently.
@@ -422,6 +440,7 @@ window.__TAURI__ = {
               words: tokenize(phrase).length,
               books: 1,
               letters: letterCount(phrase),
+              chapters: 1,
               maxVerseRun: 1,
               maxChapterRun: 1,
               maxChapterFrequency: count,
@@ -432,6 +451,16 @@ window.__TAURI__ = {
                 a.count - b.count ||
                 a.letters - b.letters ||
                 a.phrase.localeCompare(b.phrase),
+            );
+          if (command === "occurrence_csv")
+            return (
+              "phrase/word,count\n" +
+              [...entries]
+                .sort((a, b) =>
+                  a.phrase < b.phrase ? -1 : a.phrase > b.phrase ? 1 : 0,
+                )
+                .map((entry) => `${entry.phrase},${entry.count}\n`)
+                .join("")
             );
           return {
             total: entries.length,
@@ -501,6 +530,7 @@ window.__TAURI__ = {
             }))
             .filter(
               (entry) =>
+                (query.chapters == null || entry.chapters === query.chapters) &&
                 (!query.consecutiveVerses ||
                   entry.maxVerseRun >= query.consecutiveVerses) &&
                 (!query.consecutiveChapters ||
@@ -520,6 +550,16 @@ window.__TAURI__ = {
                     : 0),
             );
         });
+        if (command === "occurrence_csv")
+          return (
+            "phrase/word,count\n" +
+            [...entries]
+              .sort((a, b) =>
+                a.phrase < b.phrase ? -1 : a.phrase > b.phrase ? 1 : 0,
+              )
+              .map((entry) => `${entry.phrase},${entry.count}\n`)
+              .join("")
+          );
         return {
           total: entries.length,
           entries: entries.slice(query.offset, query.offset + 50),
@@ -531,6 +571,16 @@ window.__TAURI__ = {
     },
   },
 };
+let copiedCsv = "";
+let clipboardFails = false;
+Object.defineProperty(window.navigator, "clipboard", {
+  value: {
+    writeText: async (text) => {
+      if (clipboardFails) throw new Error("Clipboard unavailable");
+      copiedCsv = text;
+    },
+  },
+});
 window.eval(bundle.outputFiles[0].text);
 const find = (selector) => window.document.querySelector(selector);
 const change = (selector, value) => {
@@ -1475,6 +1525,66 @@ await pause(30);
 assert.equal(occurrenceRequests.at(-1).offset, 50);
 assert.match(find(".cache-status").textContent, /Saved data reused/);
 assert.match(find(".chapter-navigation").textContent, /Page 2/);
+find('[data-action="occurrence-copy"]').click();
+await pause(30);
+assert.match(find("#occurrence-copy-status").textContent, /Copied/);
+const csvRows = copiedCsv.trim().split("\n");
+assert.equal(csvRows.shift(), "phrase/word,count");
+assert.ok(csvRows.length > 50);
+assert.ok(csvRows.every((row) => row.endsWith(",7")));
+const csvNames = csvRows.map((row) => row.slice(0, row.lastIndexOf(",")));
+assert.deepEqual(csvNames, [...csvNames].sort());
+const expectedCsvNames = [1, 2]
+  .flatMap((length) =>
+    [...savedLengths.get(JSON.stringify([length, null]))]
+      .filter(([, data]) => data.count === 7)
+      .map(([phrase]) => phrase),
+  )
+  .sort();
+assert.deepEqual(csvNames, expectedCsvNames);
+clipboardFails = true;
+find('[data-action="occurrence-copy"]').click();
+await pause(30);
+assert.match(find("#occurrence-copy-status").textContent, /Unable to copy/);
+assert.ok(!find('[data-action="occurrence-copy"]').disabled);
+clipboardFails = false;
+for (const [mode, id] of [
+  ["#occurrence-book-mode", "#occurrence-books"],
+  ["#occurrence-letter-mode", "#occurrence-letters"],
+  ["#occurrence-verse-mode", "#occurrence-verses"],
+  ["#occurrence-chapter-mode", "#occurrence-chapters"],
+  ["#occurrence-chapter-frequency-mode", "#occurrence-chapter-frequency"],
+]) {
+  assert.ok(find(id).closest("label").hidden);
+  const value = find(id).value;
+  change(mode, "exact");
+  assert.ok(!find(id).closest("label").hidden);
+  change(mode, "any");
+  assert.ok(find(id).disabled && find(id).closest("label").hidden);
+  assert.equal(find(id).value, value);
+}
+change("#occurrence-count-mode", "any");
+assert.ok(
+  find("#occurrence-count").disabled &&
+    find("#occurrence-count").closest("label").hidden,
+);
+assert.equal(find("#occurrence-count").value, "7");
+change("#occurrence-mode", "exact");
+find("#occurrence-words").value = "1";
+find("#occurrence-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+assert.equal(occurrenceRequests.at(-1).anyCount, true);
+assert.equal(occurrenceRequests.at(-1).count, 4294967295);
+assert.equal(occurrenceRequests.at(-1).countUpTo, true);
+assert.ok(find("#occurrence-count").closest("label").hidden);
+assert.equal(find("#occurrence-count").value, "7");
+change("#occurrence-count-mode", "exact");
+assert.ok(!find("#occurrence-count").closest("label").hidden);
+assert.equal(find("#occurrence-count").value, "7");
+change("#occurrence-mode", "upTo");
+find("#occurrence-words").value = "2";
 change("#occurrence-count-mode", "upTo");
 assert.equal(find("#occurrence-count").value, "7");
 find("#occurrence-form").dispatchEvent(
@@ -2607,6 +2717,215 @@ assert.match(
   find(".number-detail-page .notice").textContent,
   /No words appear exactly/,
 );
+// Chapter coverage is distinct by book and chapter; all modes survive search and paging.
+find('nav [data-page="occurrences"]').click();
+change("#occurrence-count-mode", "any");
+change("#occurrence-mode", "exact");
+find("#occurrence-words").value = "1";
+for (const selector of [
+  "#occurrence-book-mode",
+  "#occurrence-letter-mode",
+  "#occurrence-verse-mode",
+  "#occurrence-chapter-mode",
+  "#occurrence-chapter-frequency-mode",
+])
+  change(selector, "any");
+find("#choose-books").checked = false;
+find("#choose-books").dispatchEvent(
+  new window.Event("change", { bubbles: true }),
+);
+assert.ok(find("#occurrence-total-chapters").closest("label").hidden);
+change("#occurrence-chapters-mode", "exact");
+assert.ok(
+  !find("#occurrence-total-chapters").disabled &&
+    !find("#occurrence-total-chapters").closest("label").hidden,
+);
+find("#occurrence-total-chapters").value = "22";
+const submitOccurrences = () =>
+  find("#occurrence-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+submitOccurrences();
+await pause(30);
+assert.equal(occurrenceRequests.at(-1).chapters, 22);
+assert.ok(
+  [
+    ...window.document.querySelectorAll(".occurrence-result .chapter-count"),
+  ].every((cell) => cell.textContent === "22 chapters"),
+);
+find('[data-action="occurrence-copy"]').click();
+await pause(30);
+assert.match(find("#occurrence-copy-status").textContent, /Copied/);
+const expectedCoverageWords = [...savedLengths.get("[1,null]")]
+  .filter(
+    ([, entry]) =>
+      new Set(
+        [...entry.positions.values()].map((p) => `${p.book} ${p.chapter}`),
+      ).size === 22,
+  )
+  .map(([phrase]) => phrase)
+  .sort();
+assert.deepEqual(
+  copiedCsv
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => line.slice(0, line.lastIndexOf(","))),
+  expectedCoverageWords,
+);
+change("#occurrence-chapters-mode", "every");
+assert.ok(
+  find("#occurrence-total-chapters").disabled &&
+    find("#occurrence-total-chapters").closest("label").hidden,
+);
+assert.equal(find("#occurrence-total-chapters").value, "22");
+submitOccurrences();
+await pause(30);
+assert.equal(occurrenceRequests.at(-1).chapters, 1189);
+assert.equal(find("#occurrence-chapters-mode").value, "every");
+const allChapterWords = [...savedLengths.get("[1,null]")]
+  .filter(
+    ([, entry]) =>
+      new Set(
+        [...entry.positions.values()].map((p) => `${p.book} ${p.chapter}`),
+      ).size === 1189,
+  )
+  .map(([phrase]) => phrase)
+  .sort();
+assert.deepEqual(
+  [...window.document.querySelectorAll(".occurrence-result")]
+    .map((row) => row.dataset.phrase)
+    .sort(),
+  allChapterWords,
+);
+change("#occurrence-chapters-mode", "any");
+submitOccurrences();
+await pause(30);
+assert.equal(occurrenceRequests.at(-1).chapters, null);
+assert.ok(find("#occurrence-total-chapters").closest("label").hidden);
+// Multiple-book statistics use the union of selected books and exclude outside owners.
+find('nav [data-page="books"]').click();
+await pause(30);
+find("#books-multiple").checked = true;
+find("#books-multiple").dispatchEvent(
+  new window.Event("change", { bubbles: true }),
+);
+await pause(30);
+find('[data-action="books-select-none"]').click();
+await pause(30);
+assert.match(
+  find(".books-page .notice").textContent,
+  /Select one or more books/,
+);
+assert.equal(window.document.querySelector(".book-chapters"), null);
+assert.equal(window.document.querySelector(".exclusive-phrase-section"), null);
+const selectStatisticsBook = (book, checked = true) => {
+  const input = find(`input[data-statistics-selected="${book}"]`);
+  input.checked = checked;
+  input.dispatchEvent(new window.Event("change", { bubbles: true }));
+};
+selectStatisticsBook("Genesis");
+await pause(30);
+selectStatisticsBook("Exodus");
+await pause(30);
+assert.match(find(".books-mode").textContent, /2 books selected/);
+assert.equal(window.document.querySelector(".book-chapters"), null);
+const groupLines = corpus.filter((verse) =>
+  ["Genesis", "Exodus"].includes(verse.book),
+);
+const groupTokens = groupLines.flatMap((verse) => tokenize(verse.text));
+const groupCounts = new Map();
+for (const token of groupTokens)
+  groupCounts.set(token, (groupCounts.get(token) ?? 0) + 1);
+const outsideGroup = new Set(
+  corpus
+    .filter((verse) => !["Genesis", "Exodus"].includes(verse.book))
+    .flatMap((verse) => tokenize(verse.text)),
+);
+const exclusiveGroup = [...groupCounts]
+  .filter(([word]) => !outsideGroup.has(word))
+  .map(([word, count]) => ({ word, count }))
+  .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+const groupCells = [
+  ...window.document.querySelectorAll(".books-page .book-statistics dd"),
+];
+assert.equal(
+  Number(groupCells[2].textContent.replaceAll(",", "")),
+  groupTokens.length,
+);
+assert.equal(
+  Number(groupCells[3].textContent.replaceAll(",", "")),
+  groupCounts.size,
+);
+assert.equal(
+  Number(groupCells[5].textContent.replaceAll(",", "")),
+  groupLines.length,
+);
+assert.ok(
+  groupCells[0].textContent.includes(
+    `(${Math.max(...groupCounts.values()).toLocaleString()} appearances)`,
+  ),
+);
+assert.ok(
+  groupCells[1].textContent.includes(
+    `(${exclusiveGroup[0].count.toLocaleString()} appearances)`,
+  ),
+);
+find('[data-action="exclusive-words"]').click();
+assert.equal(
+  find(".exclusive-words-page h1").textContent,
+  "Words only found in these books",
+);
+assert.deepEqual(
+  [...window.document.querySelectorAll(".exclusive-word-link")].map(
+    (button) => button.dataset.word,
+  ),
+  exclusiveGroup.slice(0, 50).map((entry) => entry.word),
+);
+if (exclusiveGroup.length > 50) {
+  find('[data-action="exclusive-next"]').click();
+  assert.deepEqual(
+    [...window.document.querySelectorAll(".exclusive-word-link")].map(
+      (button) => button.dataset.word,
+    ),
+    exclusiveGroup.slice(50, 100).map((entry) => entry.word),
+  );
+}
+const groupWord = find(".exclusive-word-link").dataset.word;
+find(".exclusive-word-link").click();
+await pause(30);
+assert.equal(find(".word-detail-page h1").textContent, groupWord);
+const requestsBeforeReturn = bookGroupRequests.length;
+find('nav [data-page="books"]').click();
+await pause(30);
+assert.ok(find("#books-multiple").checked);
+assert.equal(bookGroupRequests.length, requestsBeforeReturn);
+selectStatisticsBook("Numbers");
+selectStatisticsBook("Numbers", false);
+await pause(30);
+assert.match(find(".books-mode").textContent, /2 books selected/);
+find('[data-action="books-select-all"]').click();
+await pause(30);
+assert.match(find(".books-mode").textContent, /66 books selected/);
+const allGroupCells = [
+  ...window.document.querySelectorAll(".books-page .book-statistics dd"),
+];
+assert.equal(
+  Number(allGroupCells[3].textContent.replaceAll(",", "")),
+  allWords.length,
+);
+assert.equal(
+  Number(allGroupCells[5].textContent.replaceAll(",", "")),
+  corpus.length,
+);
+assert.equal(window.document.querySelector(".book-chapters"), null);
+find("#books-multiple").checked = false;
+find("#books-multiple").dispatchEvent(
+  new window.Event("change", { bubbles: true }),
+);
+await pause(30);
+assert.ok(window.document.querySelector(".book-chapters"));
+assert.ok(window.document.querySelector(".exclusive-phrase-section"));
 find('[data-page="search"]').click();
 window.__TAURI__.core.invoke = async () => {
   throw new Error("Transport unavailable");

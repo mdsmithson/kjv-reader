@@ -27,6 +27,7 @@ export const summarize = (positions) => {
     ...new Set([...chapters.values()].map((chapter) => chapter.count)),
   ].sort((a, b) => a - b);
   return {
+    chapters: chapters.size,
     maxVerseRun: Math.max(
       0,
       ...[...chapters.values()].map((chapter) => longest(chapter.verses)),

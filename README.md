@@ -182,7 +182,7 @@ deserializing a full index or constructing all matching phrase strings. **Up to*
 length requests query the relevant per-length files and page across their ranges.
 
 Files are saved beneath Tauri's application local data directory in
-`occurrences-v4-<SHA256>/words-N.bin`. The SHA-256 fingerprint covers the verse
+`occurrences-v5-<SHA256>/words-N.bin`. The SHA-256 fingerprint covers the verse
 text, book, chapter, and verse number; the version covers normalization and record format.
 Changed corpora or formats therefore use separate indexes. Older indexes
 remain intact; each requested length is rebuilt once in version 4 to add
@@ -497,3 +497,9 @@ Run `npm run prepare:data` before the UI integration tests or visual preview; th
 Reader highlighting is edited on a separate Highlights page using Edit Highlights above each chapter. Add up to ten saved filters with independent colors and enabled states: word occurrence count, phrase occurrence count, first mention, last mention, and chapter-exclusive words. Word and phrase counts cover the whole Bible. First and last mention mark only the first or final token; phrase filters use the retained equal-count-rollup catalogue. When filters overlap on a word, their colors form vertical segments from left to right. Existing highlight preferences migrate to the new format. Reader mention flags and phrase occurrence counts are prepared once, then retrieved directly for each chapter.
 
 Phrase search offers Exact Match (the complete phrase, ignoring case and punctuation) and Partial Match (consecutive text anywhere in the phrase, including word fragments). Phrase profiles link their counts to Numbers and display a saved per-book occurrence breakdown, including repeated appearances within a verse. Book counts are generated once during data preparation and reused on subsequent builds and app launches.
+
+Occurrence filters all hide their number input while Any number is selected, preserving its value when switching back. Copy data beside Results copies every match for the last completed occurrence search as alphabetical CSV with the header `phrase/word,count`, across all result pages. The desktop app exports from saved records directly to the system clipboard.
+
+Occurrence searches can restrict the number of distinct chapters containing a word or phrase: Any Number, Every Chapter of the Bible (1,189), or Exactly X Chapters. Each chapter counts once, even when the phrase repeats. Selected books determine the appearances being counted; Every Chapter still requires all Bible chapters. Chapter coverage is saved in occurrence records and reused by searches and CSV copying.
+
+Books supports selecting multiple books. Its combined view shows word and verse totals, distinct words, common words, and words exclusive to the selected set; chapter and single-book phrase sections are hidden. Group exclusivity includes words shared within the selection when none occur outside it. Statistics combine persisted per-book word frequencies and reuse recent selections.

@@ -97,3 +97,15 @@ pub fn number_words(number:usize, offset:usize, statistics:tauri::State<'_,crate
 
 #[tauri::command]
 pub fn verse_catalogue(query:crate::occurrences::prepared::VerseFrequencyQuery,verses:tauri::State<'_,crate::occurrences::prepared::PreparedVerses>)->Result<crate::occurrences::prepared::VersePage,String> {verses.frequency_page(&query)}
+
+#[tauri::command]
+pub async fn copy_occurrence_csv(query: OccurrenceQuery, index: tauri::State<'_, Arc<OccurrenceIndex>>) -> Result<(), String> {
+    let index = Arc::clone(index.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let csv = index.csv(&query)?;
+        crate::clipboard::write(&csv)
+    }).await.map_err(|error| format!("Export worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub fn books_stats(books: Vec<String>, statistics: tauri::State<'_,crate::book_stats::BookStatistics>, words: tauri::State<'_,crate::word_stats::WordStatistics>) -> Result<crate::book_stats::BookStats,String> { statistics.combined(&books,&words) }

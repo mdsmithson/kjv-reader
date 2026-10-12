@@ -29,6 +29,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(serde_json::to_value(actual)?,serde_json::to_value(expected)?);
     }
     let books: BookStatistics = serde_json::from_reader(File::open(root.join("books.json"))?)?;
+    for selected in [vec!["Genesis".to_owned(),"Exodus".to_owned()],vec!["Matthew".to_owned(),"Mark".to_owned(),"Luke".to_owned(),"John".to_owned()],bible.catalog().iter().map(|book|book.name.clone()).collect()] {
+        let before=Instant::now();
+        let group=books.combined(&selected,&words)?;
+        println!("Combined {} books from saved counts: {:?}",selected.len(),before.elapsed());
+        let mut counts=std::collections::BTreeMap::<String,usize>::new();
+        let mut outside=std::collections::HashSet::<String>::new();
+        let mut verses=0;
+        for (book,text) in bible.passages() {
+            if selected.iter().any(|name|name==book) { verses+=1; for word in kjv_reader_lib::text::words(text) { *counts.entry(word).or_default()+=1; } }
+            else { outside.extend(kjv_reader_lib::text::words(text)); }
+        }
+        let mut exclusive=counts.iter().filter(|(word,_)|!outside.contains(*word)).map(|(word,&count)|kjv_reader_lib::book_stats::CommonWord {word:word.clone(),count}).collect::<Vec<_>>();
+        exclusive.sort_by(|a,b|b.count.cmp(&a.count).then_with(||a.word.cmp(&b.word)));
+        let maximum=counts.values().max().copied().unwrap_or(0);
+        let leaders=counts.iter().filter(|(_,count)|**count==maximum).map(|(word,&count)|kjv_reader_lib::book_stats::CommonWord {word:word.clone(),count}).collect::<Vec<_>>();
+        assert_eq!((group.words,group.unique_words,group.verses),(counts.values().sum::<usize>(),counts.len(),verses));
+        assert_eq!(group.exclusive_words,exclusive);
+        assert_eq!(group.most_common,leaders);
+        assert!(group.chapters.is_empty());
+    }
     assert_eq!(
         words.get("god")?.count,
         WordStatistics::new(&bible).get("god")?.count
@@ -41,6 +61,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::temp_dir().join(format!("kjv-resource-verification-{}", std::process::id()));
     let index = OccurrenceIndex::from_passages(bible.located_passages(), &cache)
         .with_prebuilt(&root.join("occurrences"));
+    for (count,count_up_to,length) in [(u32::MAX,true,1),(7,false,2)] {
+        let query: OccurrenceQuery=serde_json::from_value(serde_json::json!({"count":count,"countUpTo":count_up_to,"words":length,"upTo":false,"offset":999}))?;
+        let expected_total=index.search(&query)?.total;
+        let csv=index.csv(&query)?;
+        let rows: Vec<_>=csv.lines().skip(1).map(|line|line.rsplit_once(',').unwrap()).collect();
+        assert_eq!(csv.lines().next(),Some("phrase/word,count"));
+        assert_eq!(rows.len(),expected_total);
+        assert!(rows.windows(2).all(|pair|pair[0].0<pair[1].0));
+        for &(phrase,count) in rows.iter().step_by((rows.len()/10).max(1)) {
+            let actual=count.parse::<usize>()?;
+            let expected=if length==1 { words.get(phrase)?.count } else { phrase_stats::details(&bible,phrase,0)?.occurrences };
+            assert_eq!(actual,expected);
+        }
+        println!("Verified full alphabetical CSV: {} rows, {} word length",rows.len(),length);
+    }
+    let chapter_cache=cache.with_extension("chapters");
+    let chapter_index=OccurrenceIndex::from_passages(bible.located_passages(),&chapter_cache).with_prebuilt(&root.join("occurrences"));
+    let mut chapter_owners=std::collections::HashMap::<String,std::collections::HashSet<(String,u16)>>::new();
+    for (book,chapter,_,text) in bible.located_passages() { for word in kjv_reader_lib::text::words(text) { chapter_owners.entry(word).or_default().insert((book.into(),chapter)); } }
+    for chapters in [1,22,1189] {
+        let query: OccurrenceQuery=serde_json::from_value(serde_json::json!({"count":4294967295u32,"countUpTo":true,"words":1,"upTo":false,"chapters":chapters,"offset":0}))?;
+        let expected=chapter_owners.iter().filter(|(_,owners)|owners.len()==chapters).map(|(word,_)|word.as_str()).collect::<std::collections::BTreeSet<_>>();
+        let csv=chapter_index.csv(&query)?;
+        let actual=csv.lines().skip(1).map(|line|line.rsplit_once(',').unwrap().0).collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual,expected);
+        let page=chapter_index.search(&query)?;
+        assert!(page.built_lengths.is_empty()); assert!(!page.built_filters); assert_eq!(page.total,expected.len()); assert!(page.entries.iter().all(|entry|entry.chapters==chapters as u32));
+        println!("Verified {} chapters: {} words",chapters,page.total);
+    }
+    std::fs::remove_dir_all(chapter_cache)?;
     for length in 1..=32 {
         let query: OccurrenceQuery = serde_json::from_value(
             serde_json::json!({"count":7,"words":length,"upTo":false,"offset":0}),

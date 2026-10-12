@@ -193,7 +193,7 @@ impl OccurrenceIndex {
         let mut tokens = HashSet::new();
         for index in 0..records {
             file.seek(SeekFrom::Start(
-                start + index * record_stride + if exclusive { 4 } else { 36 },
+                start + index * record_stride + if exclusive { 4 } else { 40 },
             ))?;
             let phrase = (0..length)
                 .map(|_| read_u32(&mut file))

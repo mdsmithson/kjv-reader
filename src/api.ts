@@ -46,6 +46,8 @@ export const occurrences = (query: OccurrenceQuery) =>
   invoke<OccurrencePage>("occurrences", {
     query: {
       ...query,
+      count: query.anyCount ? 4294967295 : query.count,
+      countUpTo: query.anyCount || query.countUpTo,
       words: query.anyLength ? maxPhraseWords : query.words,
       upTo: query.anyLength || query.upTo,
     },
@@ -121,3 +123,18 @@ export const verseCatalogue = (
   invoke<import("./model").VersePage>("verse_catalogue", {
     query: { book, offset, filters, frequencies, sort, phraseFrequencies },
   });
+
+export const copyOccurrenceData = (query: OccurrenceQuery) =>
+  invoke<void>("copy_occurrence_csv", {
+    query: {
+      ...query,
+      count: query.anyCount ? 4294967295 : query.count,
+      countUpTo: query.anyCount || query.countUpTo,
+      words: query.anyLength ? maxPhraseWords : query.words,
+      upTo: query.anyLength || query.upTo,
+      offset: 0,
+    },
+  });
+
+export const booksStats = (books: readonly string[]) =>
+  invoke<BookStats>("books_stats", { books });

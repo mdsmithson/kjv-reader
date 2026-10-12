@@ -1,3 +1,4 @@
+import { copyBrowserText } from "./preview-clipboard";
 import { numberFixture } from "./number-fixture.mjs";
 import {
   readerHighlightFixture,
@@ -183,15 +184,19 @@ window.__TAURI__ = {
               }
         ) as T;
       }
-      if (command === "book_stats") {
+      if (command === "book_stats" || command === "books_stats") {
+        const selected =
+          command === "books_stats"
+            ? (args!.books as readonly string[])
+            : [String(args?.book)];
         const counts = new Map<string, number>();
-        const lines = verses.filter((verse) => verse.book === args?.book);
+        const lines = verses.filter((verse) => selected.includes(verse.book));
         lines
           .flatMap((verse) => tokenize(verse.text))
           .forEach((word) => counts.set(word, (counts.get(word) ?? 0) + 1));
         const outside = new Set(
           verses
-            .filter((verse) => verse.book !== args?.book)
+            .filter((verse) => !selected.includes(verse.book))
             .flatMap((verse) => tokenize(verse.text)),
         );
         const leaders = (entries: [string, number][]) => {
@@ -202,29 +207,36 @@ window.__TAURI__ = {
             .map(([word, count]) => ({ word, count }));
         };
         return {
-          name: args?.book,
-          chapters: [...new Set(lines.map((verse) => verse.chapter))]
-            .sort((a, b) => a - b)
-            .map((chapter) => {
-              const tokens = lines
-                .filter((verse) => verse.chapter === chapter)
-                .flatMap((verse) => tokenize(verse.text));
-              const unique = new Set(tokens);
-              return {
-                chapter,
-                words: tokens.length,
-                uniqueWords: unique.size,
-                exclusiveWords: [...unique]
-                  .filter((word) => chapterWordOwners.get(word)!.size === 1)
-                  .map((word) => ({
-                    word,
-                    count: tokens.filter((token) => token === word).length,
-                  }))
-                  .sort(
-                    (a, b) => b.count - a.count || a.word.localeCompare(b.word),
-                  ),
-              };
-            }),
+          name: selected.join(", "),
+          chapters:
+            command === "books_stats"
+              ? []
+              : [...new Set(lines.map((verse) => verse.chapter))]
+                  .sort((a, b) => a - b)
+                  .map((chapter) => {
+                    const tokens = lines
+                      .filter((verse) => verse.chapter === chapter)
+                      .flatMap((verse) => tokenize(verse.text));
+                    const unique = new Set(tokens);
+                    return {
+                      chapter,
+                      words: tokens.length,
+                      uniqueWords: unique.size,
+                      exclusiveWords: [...unique]
+                        .filter(
+                          (word) => chapterWordOwners.get(word)!.size === 1,
+                        )
+                        .map((word) => ({
+                          word,
+                          count: tokens.filter((token) => token === word)
+                            .length,
+                        }))
+                        .sort(
+                          (a, b) =>
+                            b.count - a.count || a.word.localeCompare(b.word),
+                        ),
+                    };
+                  }),
           words: [...counts.values()].reduce((a, b) => a + b, 0),
           uniqueWords: counts.size,
           verses: lines.length,
@@ -277,7 +289,15 @@ window.__TAURI__ = {
           verses: matches.slice(query.offset, query.offset + 50),
         } as T;
       }
-      if (command === "occurrences") {
+      if (command === "copy_occurrence_csv") {
+        const csv = await window.__TAURI__!.core.invoke<string>(
+          "occurrence_csv",
+          args,
+        );
+        await copyBrowserText(csv);
+        return undefined as T;
+      }
+      if (command === "occurrences" || command === "occurrence_csv") {
         const query = args!.query as OccurrenceQuery;
         const scopeKey = (length: number) =>
           JSON.stringify([length, query.includedBooks?.slice().sort() ?? null]);
@@ -359,6 +379,7 @@ window.__TAURI__ = {
             }))
             .filter(
               (entry) =>
+                (query.chapters == null || entry.chapters === query.chapters) &&
                 (!query.consecutiveVerses ||
                   entry.maxVerseRun >= query.consecutiveVerses) &&
                 (!query.consecutiveChapters ||
@@ -378,6 +399,14 @@ window.__TAURI__ = {
                     : 0),
             );
         });
+        if (command === "occurrence_csv")
+          return ("phrase/word,count\n" +
+            [...entries]
+              .sort((a, b) =>
+                a.phrase < b.phrase ? -1 : a.phrase > b.phrase ? 1 : 0,
+              )
+              .map((entry) => `${entry.phrase},${entry.count}\n`)
+              .join("")) as T;
         return {
           total: entries.length,
           entries: entries.slice(query.offset, query.offset + 50),

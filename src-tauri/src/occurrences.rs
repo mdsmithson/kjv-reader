@@ -2,6 +2,7 @@
 pub mod exclusive;
 pub mod catalogue;
 pub mod prepared;
+mod csv;
 use crate::spatial::{Position, Spatial};
 use crate::text::words;
 use serde::{Deserialize, Serialize};
@@ -13,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const MAGIC: &[u8; 8] = b"KJVNGRM4";
-const SELECTION_MAGIC: &[u8; 8] = b"KJVSEL04";
-const VERSION: u32 = 4;
+const MAGIC: &[u8; 8] = b"KJVNGRM5";
+const SELECTION_MAGIC: &[u8; 8] = b"KJVSEL05";
+const VERSION: u32 = 5;
 const HEADER_SIZE: u64 = 64;
 pub const MAX_WORDS: u16 = 32;
 const PAGE_SIZE: usize = crate::bible::PAGE_SIZE;
@@ -35,6 +36,7 @@ pub struct OccurrenceQuery {
     pub letters: Option<u32>,
     #[serde(default)]
     pub letters_up_to: bool,
+    pub chapters: Option<u16>,
     pub consecutive_verses: Option<u16>,
     pub consecutive_chapters: Option<u16>,
     pub chapter_frequency: Option<u32>,
@@ -49,6 +51,7 @@ pub struct PhraseCount {
     pub count: u32,
     pub books: u16,
     pub letters: u32,
+    pub chapters: u32,
     pub max_verse_run: u16,
     pub max_chapter_run: u16,
     pub max_chapter_frequency: u32,
@@ -100,8 +103,8 @@ fn read_u64(file: &mut File) -> io::Result<u64> {
 
 fn stride(length: u16) -> u64 {
     // count, books, letters, verse run, chapter run, max chapter count,
-    // chapter-frequency byte offset (u64), chapter-frequency item count, tokens.
-    4 * (u64::from(length) + 9)
+    // chapter-frequency byte offset (u64), distinct frequency count, chapter coverage, tokens.
+    4 * (u64::from(length) + 10)
 }
 
 fn letter_count(text: &str) -> u32 {
@@ -161,6 +164,7 @@ struct Record {
     max_chapter_frequency: u32,
     frequencies_offset: u64,
     frequencies_count: u32,
+    chapters: u32,
 }
 
 impl Record {
@@ -174,11 +178,13 @@ impl Record {
             max_chapter_frequency: read_u32(file)?,
             frequencies_offset: read_u64(file)?,
             frequencies_count: read_u32(file)?,
+            chapters: read_u32(file)?,
         })
     }
 
     fn matches(&self, file: &mut File, query: &OccurrenceQuery) -> io::Result<bool> {
-        if query.books.is_some_and(|books| if query.books_up_to { self.books > books } else { self.books != books })
+        if query.chapters.is_some_and(|chapters| self.chapters != u32::from(chapters))
+            || query.books.is_some_and(|books| if query.books_up_to { self.books > books } else { self.books != books })
             || query.letters.is_some_and(|letters| if query.letters_up_to { self.letters > letters } else { self.letters != letters }) {
             return Ok(false);
         }
@@ -352,6 +358,7 @@ impl OccurrenceIndex {
             }
             writer.write_all(&offset.to_le_bytes())?;
             writer.write_all(&(spatial.chapter_frequencies.len() as u32).to_le_bytes())?;
+            writer.write_all(&spatial.chapters.to_le_bytes())?;
             for token in *tokens { writer.write_all(&token.to_le_bytes())?; }
             offset += spatial.chapter_frequencies.len() as u64 * 4;
         }
@@ -379,7 +386,7 @@ impl OccurrenceIndex {
     }
 
     fn selection(&self, file: &mut File, records: u64, length: u16, query: &OccurrenceQuery, ranges: Vec<(u64, u64)>) -> io::Result<(Selection, bool)> {
-        if query.consecutive_verses.is_none() && query.consecutive_chapters.is_none() && query.chapter_frequency.is_none()
+        if query.chapters.is_none() && query.consecutive_verses.is_none() && query.consecutive_chapters.is_none() && query.chapter_frequency.is_none()
             && !(query.count_up_to && (query.books.is_some() || query.letters.is_some())) {
             return Ok((Selection::Ranges(ranges), false));
         }
@@ -414,9 +421,15 @@ impl OccurrenceIndex {
     }
 
     pub fn search(&self, query: &OccurrenceQuery) -> Result<OccurrencePage, String> {
+        self.with_query(query, |index, query| index.search_page(query).map_err(|error| format!("Unable to build or read saved occurrence data: {error}")))
+    }
+    pub fn csv(&self, query: &OccurrenceQuery) -> Result<String, String> {
+        self.with_query(query, |index, query| index.read_csv(query).map_err(|error| format!("Unable to export occurrence data: {error}")))
+    }
+    fn with_query<T>(&self, query: &OccurrenceQuery, read: impl Fn(&Self, &OccurrenceQuery) -> Result<T, String>) -> Result<T, String> {
         if query.count == 0 || query.words == 0 || query.words > MAX_WORDS
             || query.books.is_some_and(|books| books == 0 || books > 66)
-            || query.consecutive_verses == Some(0) || query.consecutive_chapters == Some(0)
+            || query.chapters == Some(0) || query.consecutive_verses == Some(0) || query.consecutive_chapters == Some(0)
             || query.chapter_frequency == Some(0) {
             return Err(format!("Use positive counts, 1–{MAX_WORDS} words, and 1–66 books. Letter counts may be zero."));
         }
@@ -447,9 +460,9 @@ impl OccurrenceIndex {
                     })
                 }))
             };
-            return scope.search(&OccurrenceQuery { included_books: None, ..query.clone() });
+            return scope.with_query(&OccurrenceQuery { included_books: None, ..query.clone() }, read);
         }
-        self.search_page(query).map_err(|error| format!("Unable to build or read saved occurrence data: {error}"))
+        read(self, query)
     }
 
     fn search_page(&self, query: &OccurrenceQuery) -> io::Result<OccurrencePage> {
@@ -487,7 +500,7 @@ impl OccurrenceIndex {
                         .ok_or_else(|| invalid("Invalid token ID in occurrence index"))
                 }).collect::<io::Result<Vec<_>>>()?.join(" ");
                 entries.push(PhraseCount {
-                    phrase, words: length, count: record.count, books: record.books, letters: record.letters,
+                    phrase, words: length, count: record.count, books: record.books, letters: record.letters, chapters: record.chapters,
                     max_verse_run: record.max_verse_run, max_chapter_run: record.max_chapter_run,
                     max_chapter_frequency: record.max_chapter_frequency,
                 });
@@ -800,7 +813,46 @@ mod tests {
     }
 
     fn query(count: u32, words: u16, up_to: bool, offset: usize) -> OccurrenceQuery {
-        OccurrenceQuery { count, count_up_to: false, words, up_to, offset, books: None, books_up_to: false, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None }
+        OccurrenceQuery { count, count_up_to: false, words, up_to, offset, books: None, books_up_to: false, chapters: None, letters: None, letters_up_to: false, consecutive_verses: None, consecutive_chapters: None, chapter_frequency: None, included_books: None }
+    }
+
+    #[test]
+    fn chapter_coverage_counts_distinct_book_chapters_and_filters_saved_data() {
+        let root=cache_root();
+        let source: BTreeMap<String,String>=(1..=60).map(|n|(format!("Genesis 1:{n}"),format!("shared word{n} word{n}"))).chain([
+            ("Genesis 2:1".into(),"shared alpha shared".into()),
+            ("Exodus 1:1".into(),"shared alpha".into()),
+        ]).collect();
+        let bible=crate::bible::Bible::from_json(&serde_json::to_string(&source).unwrap()).unwrap();
+        let index=OccurrenceIndex::from_passages(bible.located_passages(),&root);
+        let all=OccurrenceQuery {count_up_to:true,..query(u32::MAX,2,true,0)};
+        let mut oracle=HashMap::<String,HashSet<(String,u16)>>::new();
+        for (book,chapter,_,text) in bible.located_passages() {
+            let tokens=words(text);
+            for length in 1..=2 { for window in tokens.windows(length) { oracle.entry(window.join(" ")).or_default().insert((book.into(),chapter)); } }
+        }
+        for chapters in [1,2,3,1189] {
+            let request=OccurrenceQuery {chapters:Some(chapters),..all.clone()};
+            let total=index.search(&request).unwrap().total;
+            let mut actual=Vec::new();
+            for offset in (0..total).step_by(PAGE_SIZE) {
+                actual.extend(index.search(&OccurrenceQuery {offset,..request.clone()}).unwrap().entries.into_iter().map(|entry| {assert_eq!(entry.chapters,u32::from(chapters));entry.phrase}));
+            }
+            actual.sort();
+            let mut expected=oracle.iter().filter(|(_,owners)|owners.len()==chapters as usize).map(|(phrase,_)|phrase.clone()).collect::<Vec<_>>(); expected.sort();
+            assert_eq!(actual,expected);
+            assert_eq!(index.csv(&request).unwrap().lines().skip(1).map(|line|line.rsplit_once(',').unwrap().0.to_owned()).collect::<Vec<_>>(),expected);
+        }
+        let both=OccurrenceQuery {chapters:Some(2),books:Some(2),count:2,count_up_to:false,words:1,up_to:false,..all.clone()};
+        assert_eq!(index.search(&both).unwrap().entries[0].phrase,"alpha");
+        let scoped=OccurrenceQuery {chapters:Some(2),included_books:Some(vec!["Genesis".into()]),..all.clone()};
+        assert_eq!(index.search(&scoped).unwrap().entries.iter().map(|e|e.phrase.as_str()).collect::<Vec<_>>(),vec!["shared"]);
+        let stamp=fs::metadata(index.path(1)).unwrap().modified().unwrap();
+        let restarted=OccurrenceIndex::from_passages(bible.located_passages(),&root);
+        assert!(restarted.search(&both).unwrap().built_lengths.is_empty());
+        assert_eq!(stamp,fs::metadata(index.path(1)).unwrap().modified().unwrap());
+        assert!(index.search(&OccurrenceQuery {chapters:Some(0),..all}).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -176,8 +176,16 @@ fn verify_prepared() {
     );
     let analysis = root
         .join("occurrences")
-        .join(format!("occurrences-v4-{fingerprint}"));
+        .join(format!("occurrences-v5-{fingerprint}"));
     for length in 1..=32 {
+        use std::io::Read;
+        let mut file=fs::File::open(analysis.join(format!("words-{length}.bin"))).unwrap();
+        let mut header=[0u8;64]; file.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..8], b"KJVNGRM5");
+        assert_eq!(u32::from_le_bytes(header[8..12].try_into().unwrap()),5);
+        let records=u64::from_le_bytes(header[48..56].try_into().unwrap());
+        let frequencies=u64::from_le_bytes(header[56..64].try_into().unwrap());
+        assert_eq!(file.metadata().unwrap().len(),64 + records * 4 * (length as u64 + 10) + frequencies * 4);
         for prefix in ["words", "exclusive"] {
             assert!(
                 fs::metadata(analysis.join(format!("{prefix}-{length}.bin")))

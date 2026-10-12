@@ -11,6 +11,8 @@ mod spatial;
 
 #[cfg(feature = "desktop")]
 mod commands;
+#[cfg(feature = "desktop")]
+mod clipboard;
 
 #[cfg(feature = "desktop")]
 pub fn run() {
@@ -52,11 +54,13 @@ pub fn run() {
             commands::phrase_details,
             commands::word_details,
             commands::book_stats,
+            commands::books_stats,
             commands::exclusive_count,
             commands::exclusive_phrases,
             commands::chapter,
             commands::search,
-            commands::occurrences
+            commands::occurrences,
+            commands::copy_occurrence_csv
         ])
         .run(tauri::generate_context!())
         .expect("Unable to run KJV Reader");

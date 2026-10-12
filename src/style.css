@@ -1482,3 +1482,71 @@ header {
 .phrase-books-table tfoot {
   font-weight: 700;
 }
+
+.occurrence-results-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.occurrence-results-heading h2 {
+  margin: 0 auto 0 0;
+}
+.occurrence-results-heading {
+  margin-bottom: 20px;
+}
+#occurrence-copy-status:empty {
+  display: none;
+}
+
+.filter-controls:has(#occurrence-chapters-mode) {
+  grid-template-columns: minmax(0, 1fr);
+}
+#occurrence-chapters-mode {
+  width: 100%;
+  font-size: 12px;
+}
+
+.books-mode {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1.5rem 0;
+}
+.book-list .book-selection {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid #d9cfbe;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.book-list .book-selection:has(input:checked) {
+  background: #653a32;
+  border-color: #653a32;
+  color: white;
+}
+
+.books-page:has(#books-multiple:checked) .book-list {
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.books-page:has(#books-multiple:checked) .book-statistics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 32px;
+}
+@media (max-width: 720px) {
+  .books-page:has(#books-multiple:checked) .book-statistics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.books-mode > .checkbox {
+  flex-direction: row;
+  gap: 0.5rem;
+}
