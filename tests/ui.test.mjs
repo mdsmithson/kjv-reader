@@ -253,7 +253,12 @@ window.__TAURI__ = {
   core: {
     invoke: async (command, args) => {
       if (command === "chapters_catalogue")
-        return chapterCatalogue.list(args.book, args.offset, args.sort);
+        return chapterCatalogue.list(
+          args.book,
+          args.offset,
+          args.sort,
+          args.filters,
+        );
       if (command === "chapter_profile")
         return chapterCatalogue.detail(args.query);
       if (command === "reader_highlights")
@@ -3363,6 +3368,42 @@ assert.deepEqual(
       .slice(0, 50)
       .map((entry) => `${entry.book} ${entry.chapter}`),
   );
+  const submitChapterFilters = async (owner, values) => {
+    for (const [field, value] of Object.entries(values)) {
+      find(
+        `[data-chapter-filter="${owner}"][data-chapter-filter-field="${field}"]`,
+      ).click();
+      find(`#chapter-${owner}-${field}-filter`).value = String(value);
+    }
+    find(`[data-chapter-filter-form="${owner}"]`).dispatchEvent(
+      new window.Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await pause(30);
+  };
+  const genesisSummary = chapterHeader.entries.find(
+    (row) => row.book === "Genesis" && row.chapter === 1,
+  );
+  await submitChapterFilters("catalogue", {
+    letters: genesisSummary.letters,
+    chapter: 1,
+    book: "Genesis",
+  });
+  assert.deepEqual(chapterReferences(), ["Genesis 1"]);
+  find(
+    '[data-chapter-sort="catalogue"][data-chapter-sort-field="letters"]',
+  ).click();
+  await pause(30);
+  assert.deepEqual(chapterReferences(), ["Genesis 1"]);
+  assert.equal(
+    find("#chapter-catalogue-letters-filter").value,
+    String(genesisSummary.letters),
+  );
+  find('[data-chapter-filter-clear="catalogue"]').click();
+  await pause(30);
+  assert.match(
+    find(".chapters-page .result-summary").textContent,
+    /1,189 chapters/,
+  );
   change("#chapters-book", "Genesis");
   await pause(30);
   find('[data-chapter-profile="1"][data-book="Genesis"]').click();
@@ -3385,6 +3426,13 @@ assert.deepEqual(
     ),
     [
       chapterTokens.length,
+      corpus
+        .filter((verse) => verse.book === "Genesis" && verse.chapter === 1)
+        .reduce(
+          (sum, verse) =>
+            sum + (verse.text.match(/\p{Alphabetic}/gu) ?? []).length,
+          0,
+        ),
       uniqueChapterTokens.length,
       firstMentions.length,
       chapterExclusive.length,
@@ -3453,6 +3501,72 @@ assert.deepEqual(
       ).click();
       await pause(30);
     }
+  }
+  for (const [owner, selector, source, textField, fields] of [
+    [
+      "words",
+      ".chapter-word-row",
+      genesisChapterProfile.words,
+      "word",
+      ["count", "bibleCount", "letters", "books"],
+    ],
+    [
+      "phrases",
+      ".chapter-phrase-row",
+      genesisChapterProfile.phrases,
+      "phrase",
+      [
+        "words",
+        "letters",
+        "books",
+        "firstMentionWords",
+        "count",
+        "occurrences",
+      ],
+    ],
+  ]) {
+    const target = source[0];
+    const values = Object.fromEntries(
+      fields.map((field) => [field, target[field]]),
+    );
+    values[textField] = target[textField];
+    await submitChapterFilters(owner, values);
+    const expected = source.filter((row) =>
+      Object.entries(values).every(([field, value]) =>
+        typeof value === "string"
+          ? row[field].includes(value)
+          : row[field] === value,
+      ),
+    );
+    assert.deepEqual(
+      [...window.document.querySelectorAll(selector)]
+        .map((row) =>
+          owner === "words" ? row.dataset.word : row.dataset.savedPhrase,
+        )
+        .sort(),
+      expected.map((row) => row[textField]).sort(),
+    );
+    find(
+      `[data-chapter-sort="${owner}"][data-chapter-sort-field="${textField}"]`,
+    ).click();
+    await pause(30);
+    assert.equal(
+      window.document.querySelectorAll(selector).length,
+      expected.length,
+    );
+    await submitChapterFilters(owner, { letters: 999999 });
+    assert.equal(window.document.querySelectorAll(selector).length, 0);
+    assert.match(
+      find(`[data-chapter-filter-form="${owner}"]`).nextElementSibling
+        .textContent,
+      /0–0 of 0/,
+    );
+    find(`[data-chapter-filter-clear="${owner}"]`).click();
+    await pause(30);
+    assert.equal(
+      window.document.querySelectorAll(selector).length,
+      Math.min(50, source.length),
+    );
   }
   const chapterWord = find(".chapter-word-row").dataset.word;
   find(".chapter-word-row").click();

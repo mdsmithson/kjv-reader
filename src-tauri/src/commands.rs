@@ -111,6 +111,7 @@ pub async fn copy_occurrence_csv(query: OccurrenceQuery, index: tauri::State<'_,
 pub fn books_stats(books: Vec<String>, statistics: tauri::State<'_,crate::book_stats::BookStatistics>, words: tauri::State<'_,crate::word_stats::WordStatistics>) -> Result<crate::book_stats::BookStats,String> { statistics.combined(&books,&words) }
 
 #[tauri::command]
-pub fn chapters_catalogue(book:Option<String>,offset:usize,sort:Option<crate::occurrences::prepared::chapters::ChapterSort>,chapters:tauri::State<'_,crate::occurrences::prepared::chapters::PreparedChapters>)->crate::occurrences::prepared::chapters::ChapterPage {chapters.page(book.as_deref(),offset,sort.as_ref())}
+pub fn chapters_catalogue(book:Option<String>,offset:usize,sort:Option<crate::occurrences::prepared::chapters::ChapterSort>,filters:Option<crate::occurrences::prepared::chapters::ChapterFilters>,chapters:tauri::State<'_,crate::occurrences::prepared::chapters::PreparedChapters>)->crate::occurrences::prepared::chapters::ChapterPage {chapters.page_filtered(book.as_deref(),offset,sort.as_ref(),&filters.unwrap_or_default())}
+
 #[tauri::command]
 pub fn chapter_profile(query:crate::occurrences::prepared::chapters::ChapterDetailQuery,chapters:tauri::State<'_,crate::occurrences::prepared::chapters::PreparedChapters>)->Result<crate::occurrences::prepared::chapters::ChapterDetail,String>{chapters.detail(&query)}

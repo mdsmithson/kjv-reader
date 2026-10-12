@@ -369,6 +369,53 @@ const multipleStatistics = async (
 const refreshBookStatistics = () =>
   state.multiBookMode ? multipleStatistics() : statistics(state.statisticsBook);
 
+const readChapterFilters = (owner: string) => {
+  const b = state.chapterBrowser;
+  const form = root.querySelector<HTMLFormElement>(
+    `[data-chapter-filter-form="${owner}"]`,
+  );
+  if (!form)
+    return owner === "catalogue"
+      ? b.filters
+      : owner === "words"
+        ? b.wordFilters
+        : b.phraseFilters;
+  return Object.fromEntries(
+    Array.from(
+      form.querySelectorAll<HTMLInputElement>("[data-chapter-filter-input]"),
+      (input) => [
+        input.dataset.chapterFilterInput!,
+        input.value.trim()
+          ? input.type === "number"
+            ? Number.isSafeInteger(input.valueAsNumber) &&
+              input.valueAsNumber >= 0
+              ? input.valueAsNumber
+              : null
+            : input.value.trim()
+          : null,
+      ],
+    ),
+  );
+};
+const applyChapterFilters = (
+  owner: string,
+  filters: import("./chapters-page").ChapterFilters,
+) => {
+  dispatch(
+    {
+      type: "chapter-browser",
+      changes:
+        owner === "catalogue"
+          ? { filters, offset: 0 }
+          : owner === "words"
+            ? { wordFilters: filters, wordOffset: 0 }
+            : { phraseFilters: filters, phraseOffset: 0 },
+    },
+    true,
+  );
+  if (owner === "catalogue") void chapterCatalogue(true);
+  else void chapterProfile(undefined, true);
+};
 const chapterCatalogue = async (preserve = false) => {
   const b = state.chapterBrowser;
   dispatch(
@@ -381,7 +428,7 @@ const chapterCatalogue = async (preserve = false) => {
     preserve,
   );
   await load(
-    () => api.chaptersCatalogue(b.book, b.offset, b.sort),
+    () => api.chaptersCatalogue(b.book, b.offset, b.sort, b.filters),
     (list) => ({ type: "chapter-browser", changes: { list }, busy: false }),
     preserve,
   );
@@ -400,6 +447,13 @@ const chapterProfile = async (
         phraseOffset: 0,
         wordSort: { field: "word", direction: "asc" as const },
         phraseSort: { field: "phrase", direction: "asc" as const },
+        wordFilters: {},
+        phraseFilters: {},
+        filterFields: {
+          ...state.chapterBrowser.filterFields,
+          words: null,
+          phrases: null,
+        },
       }
     : { selected };
   dispatch(
@@ -415,6 +469,8 @@ const chapterProfile = async (
         phraseOffset: b.phraseOffset,
         wordSort: b.wordSort,
         phraseSort: b.phraseSort,
+        wordFilters: b.wordFilters,
+        phraseFilters: b.phraseFilters,
       }),
     (detail) => ({ type: "chapter-browser", changes: { detail }, busy: false }),
     preserve,
@@ -614,6 +670,49 @@ root.addEventListener("click", (event) => {
       root
         .querySelector<HTMLInputElement>(`#verse-search-${searches.length}`)
         ?.focus({ preventScroll: true });
+    return;
+  }
+  if (button.dataset.chapterFilter) {
+    const owner = button.dataset.chapterFilter as
+        "catalogue" | "words" | "phrases",
+      field = button.dataset.chapterFilterField!;
+    const filters = readChapterFilters(owner),
+      b = state.chapterBrowser;
+    dispatch(
+      {
+        type: "chapter-browser",
+        changes: {
+          ...(owner === "catalogue"
+            ? { filters }
+            : owner === "words"
+              ? { wordFilters: filters }
+              : { phraseFilters: filters }),
+          filterFields: {
+            ...b.filterFields,
+            [owner]: b.filterFields[owner] === field ? null : field,
+          },
+        },
+      },
+      true,
+    );
+    root
+      .querySelector<HTMLInputElement>(`#chapter-${owner}-${field}-filter`)
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  if (button.dataset.chapterFilterClear) {
+    const owner = button.dataset.chapterFilterClear as
+      "catalogue" | "words" | "phrases";
+    dispatch(
+      {
+        type: "chapter-browser",
+        changes: {
+          filterFields: { ...state.chapterBrowser.filterFields, [owner]: null },
+        },
+      },
+      true,
+    );
+    applyChapterFilters(owner, {});
     return;
   }
   if (button.dataset.chapterSection) {
@@ -1292,6 +1391,15 @@ root.addEventListener("change", (event) => {
 
 root.addEventListener("submit", (event) => {
   const form = event.target as HTMLFormElement;
+  if (form.dataset.chapterFilterForm) {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    applyChapterFilters(
+      form.dataset.chapterFilterForm,
+      readChapterFilters(form.dataset.chapterFilterForm),
+    );
+    return;
+  }
   if (form.id === "reader-highlights-form") {
     event.preventDefault();
     if (!form.reportValidity()) return;

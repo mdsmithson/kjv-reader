@@ -143,11 +143,13 @@ export const chaptersCatalogue = (
   book: string | null,
   offset: number,
   sort: import("./chapters-page").ChapterSort,
+  filters: import("./chapters-page").ChapterFilters,
 ) =>
   invoke<import("./chapters-page").ChapterPage>("chapters_catalogue", {
     book,
     offset,
     sort,
+    filters,
   });
 export const chapterProfile = (query: Record<string, unknown>) =>
   invoke<import("./chapters-page").ChapterDetail>("chapter_profile", { query });

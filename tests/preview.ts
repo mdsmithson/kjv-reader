@@ -112,7 +112,12 @@ window.__TAURI__ = {
       args?: Record<string, unknown>,
     ): Promise<T> => {
       if (command === "chapters_catalogue")
-        return chapterCatalogue.list(args?.book, args?.offset, args?.sort) as T;
+        return chapterCatalogue.list(
+          args?.book,
+          args?.offset,
+          args?.sort,
+          args?.filters,
+        ) as T;
       if (command === "chapter_profile")
         return (await chapterCatalogue.detail(args?.query)) as T;
       if (command === "reader_highlights")

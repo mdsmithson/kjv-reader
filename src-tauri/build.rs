@@ -158,7 +158,7 @@ fn verify_prepared() {
     assert_eq!(search["words"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
     assert_eq!(search["texts"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
     let chapters:serde_json::Value=serde_json::from_slice(&fs::read(root.join("chapters.json")).expect("Prepare chapter profiles before packaging")).unwrap();
-    assert_eq!(chapters["format"].as_u64(),Some(1)); assert_eq!(chapters["fingerprint"],manifest["fingerprint"]);
+    assert_eq!(chapters["format"].as_u64(),Some(2)); assert_eq!(chapters["fingerprint"],manifest["fingerprint"]);
     let chapter_count=corpus.keys().map(|reference|reference.rsplit_once(':').unwrap().0).collect::<std::collections::HashSet<_>>().len();
     assert_eq!(chapters["entries"].as_array().unwrap().len(),chapter_count);
     assert_eq!(chapters["sizes"].as_array().unwrap().len(),chapter_count);

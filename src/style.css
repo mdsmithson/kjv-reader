@@ -1652,8 +1652,8 @@ header {
 }
 .chapter-phrase-heading,
 .chapter-phrase-row {
-  grid-template-columns: minmax(200px, 1fr) 60px 60px 60px 110px 90px 90px;
-  min-width: 800px;
+  grid-template-columns: minmax(200px, 1fr) 85px 85px 85px 110px 90px 90px;
+  min-width: 875px;
 }
 .chapter-catalogue-heading button,
 .chapter-word-heading button,
@@ -1677,4 +1677,39 @@ header {
   gap: 12px;
   flex-wrap: wrap;
   margin-top: 24px;
+}
+
+.chapter-filter-heading {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.chapter-filter-heading > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.chapter-sort-control {
+  padding: 4px !important;
+  min-width: 20px;
+}
+.chapter-custom-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: end;
+  margin: 20px 0;
+}
+.chapter-custom-filters[hidden],
+.chapter-custom-filters label[hidden] {
+  display: none;
+}
+.chapter-custom-filters input {
+  padding: 10px 12px;
+  width: 180px;
+  font-size: 14px;
+}
+.chapter-catalogue-heading,
+.chapter-catalogue-row {
+  grid-template-columns: minmax(130px, 1fr) 90px repeat(5, minmax(90px, 1fr));
+  min-width: 875px;
 }

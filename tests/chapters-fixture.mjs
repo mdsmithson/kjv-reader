@@ -10,10 +10,19 @@ export const chaptersFixture = (header, loadProfile) => {
           : 0
       : a[field] - b[field];
   return {
-    list: (book, offset, sort) => {
+    list: (book, offset, sort, filters = {}) => {
       const entries = header.entries
         .map((entry, id) => ({ entry, id }))
-        .filter(({ entry }) => book == null || entry.book === book);
+        .filter(
+          ({ entry }) =>
+            (book == null || entry.book === book) &&
+            Object.entries(filters).every(([field, value]) =>
+              value == null || typeof value === "string"
+                ? value == null ||
+                  entry[field].toLowerCase() === value.trim().toLowerCase()
+                : entry[field] === value,
+            ),
+        );
       if (sort)
         entries.sort(
           (a, b) =>
@@ -34,8 +43,15 @@ export const chaptersFixture = (header, loadProfile) => {
       if (id < 0) throw new Error("Chapter not found");
       if (!cache.has(id)) cache.set(id, await loadProfile(id));
       const profile = cache.get(id);
-      const page = (entries, offset, sort, name) => {
-        entries = [...entries];
+      const page = (entries, offset, sort, name, filters = {}) => {
+        entries = entries.filter((entry) =>
+          Object.entries(filters).every(([field, value]) =>
+            value == null || typeof value === "string"
+              ? value == null ||
+                entry[field].toLowerCase().includes(value.trim().toLowerCase())
+              : entry[field] === value,
+          ),
+        );
         if (sort)
           entries.sort(
             (a, b) =>
@@ -54,12 +70,14 @@ export const chaptersFixture = (header, loadProfile) => {
           query.wordOffset ?? 0,
           query.wordSort,
           "word",
+          query.wordFilters,
         ),
         phraseResults: page(
           profile.phrases,
           query.phraseOffset ?? 0,
           query.phraseSort,
           "phrase",
+          query.phraseFilters,
         ),
       };
     },

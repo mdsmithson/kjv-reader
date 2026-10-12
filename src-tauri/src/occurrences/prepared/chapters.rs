@@ -7,6 +7,7 @@ pub struct ChapterSummary {
     pub book: String,
     pub chapter: u16,
     pub words: usize,
+    pub letters: usize,
     pub unique_words: usize,
     pub first_mention_words: usize,
     pub exclusive_words: usize,
@@ -76,7 +77,7 @@ pub struct ChapterDetail {
     pub word_results: WordPage,
     pub phrase_results: PhrasePage,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterDetailQuery {
     pub book: String,
@@ -87,6 +88,36 @@ pub struct ChapterDetailQuery {
     pub phrase_offset: usize,
     pub word_sort: Option<ChapterSort>,
     pub phrase_sort: Option<ChapterSort>,
+    #[serde(default)]
+    pub word_filters: ChapterFilters,
+    #[serde(default)]
+    pub phrase_filters: ChapterFilters,
+}
+pub type ChapterFilters = BTreeMap<String, serde_json::Value>;
+fn matches_filters(
+    filters: &ChapterFilters,
+    counts: &[(&str, usize)],
+    texts: &[(&str, &str)],
+    exact_text: bool,
+) -> bool {
+    filters.iter().all(|(field, value)| {
+        if value.is_null() {
+            return true;
+        }
+        if let Some((_, count)) = counts.iter().find(|(name, _)| *name == field) {
+            return value.as_u64() == Some(*count as u64);
+        }
+        if let Some((_, text)) = texts.iter().find(|(name, _)| *name == field) {
+            return value.as_str().is_some_and(|query| {
+                if exact_text {
+                    text.to_lowercase() == query.trim().to_lowercase()
+                } else {
+                    text.to_lowercase().contains(&query.trim().to_lowercase())
+                }
+            });
+        }
+        false
+    })
 }
 pub struct PreparedChapters {
     root: PathBuf,
@@ -100,7 +131,7 @@ fn read_header(root: &Path, bible: &Bible) -> io::Result<Header> {
         .iter()
         .flat_map(|book| (1..=book.chapters).map(move |chapter| (book.name.as_str(), chapter)))
         .collect::<Vec<_>>();
-    if header.format != 1
+    if header.format != 2
         || header.fingerprint != fingerprint(bible)
         || header.entries.len() != expected.len()
         || header.sizes.len() != expected.len()
@@ -139,12 +170,36 @@ impl PreparedChapters {
         offset: usize,
         sort: Option<&ChapterSort>,
     ) -> ChapterPage {
+        self.page_filtered(book, offset, sort, &ChapterFilters::new())
+    }
+    pub fn page_filtered(
+        &self,
+        book: Option<&str>,
+        offset: usize,
+        sort: Option<&ChapterSort>,
+        filters: &ChapterFilters,
+    ) -> ChapterPage {
         let mut entries = self
             .header
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, entry)| book.is_none_or(|book| entry.book == book))
+            .filter(|(_, entry)| {
+                book.is_none_or(|book| entry.book == book)
+                    && matches_filters(
+                        filters,
+                        &[
+                            ("chapter", entry.chapter as usize),
+                            ("words", entry.words),
+                            ("letters", entry.letters),
+                            ("uniqueWords", entry.unique_words),
+                            ("firstMentionWords", entry.first_mention_words),
+                            ("exclusiveWords", entry.exclusive_words),
+                        ],
+                        &[("book", entry.book.as_str())],
+                        true,
+                    )
+            })
             .collect::<Vec<_>>();
         if let Some(sort) = sort {
             entries.sort_by(|(id, a), (other, b)| {
@@ -152,6 +207,7 @@ impl PreparedChapters {
                     "book" => a.book.cmp(&b.book),
                     "chapter" => a.chapter.cmp(&b.chapter),
                     "words" => a.words.cmp(&b.words),
+                    "letters" => a.letters.cmp(&b.letters),
                     "uniqueWords" => a.unique_words.cmp(&b.unique_words),
                     "firstMentionWords" => a.first_mention_words.cmp(&b.first_mention_words),
                     "exclusiveWords" => a.exclusive_words.cmp(&b.exclusive_words),
@@ -199,7 +255,23 @@ impl PreparedChapters {
                 profile
             }
         };
-        let mut words = profile.words.iter().collect::<Vec<_>>();
+        let mut words = profile
+            .words
+            .iter()
+            .filter(|entry| {
+                matches_filters(
+                    &query.word_filters,
+                    &[
+                        ("count", entry.count),
+                        ("letters", entry.letters),
+                        ("books", entry.books),
+                        ("bibleCount", entry.bible_count),
+                    ],
+                    &[("word", entry.word.as_str())],
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
         if let Some(sort) = &query.word_sort {
             words.sort_by(|a, b| {
                 let value = match sort.field.as_str() {
@@ -212,7 +284,25 @@ impl PreparedChapters {
                 order(value, sort).then_with(|| a.word.cmp(&b.word))
             });
         }
-        let mut phrases = profile.phrases.iter().collect::<Vec<_>>();
+        let mut phrases = profile
+            .phrases
+            .iter()
+            .filter(|entry| {
+                matches_filters(
+                    &query.phrase_filters,
+                    &[
+                        ("words", entry.phrase.words as usize),
+                        ("letters", entry.phrase.letters as usize),
+                        ("books", entry.phrase.books as usize),
+                        ("occurrences", entry.phrase.occurrences as usize),
+                        ("count", entry.count),
+                        ("firstMentionWords", entry.first_mention_words),
+                    ],
+                    &[("phrase", entry.phrase.phrase.as_str())],
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
         if let Some(sort) = &query.phrase_sort {
             phrases.sort_by(|a, b| {
                 let value = match sort.field.as_str() {
@@ -272,6 +362,7 @@ impl PreparedPhrases {
                             book: book.name.clone(),
                             chapter: chapter.chapter,
                             words: chapter.words,
+                            letters: 0,
                             unique_words: chapter.unique_words,
                             first_mention_words: 0,
                             exclusive_words: chapter.exclusive_words.len(),
@@ -303,6 +394,7 @@ impl PreparedPhrases {
             for (book, chapter, _, text) in bible.located_passages() {
                 let id = ids[&(book.into(), chapter)];
                 profiles[id].summary.verses += 1;
+                profiles[id].summary.letters += text.chars().filter(|c| c.is_alphabetic()).count();
                 let raw = text
                     .split(|c: char| !c.is_alphanumeric() && c != '\'')
                     .map(|word| word.trim_matches('\''))
@@ -386,7 +478,7 @@ impl PreparedPhrases {
             json_file(
                 &self.root.join("chapters.json"),
                 &Header {
-                    format: 1,
+                    format: 2,
                     fingerprint: self.manifest.fingerprint.clone(),
                     entries,
                     sizes,
@@ -428,16 +520,19 @@ mod tests {
                 phrase_offset: 0,
                 word_sort: None,
                 phrase_sort: None,
+                word_filters: Default::default(),
+                phrase_filters: Default::default(),
             };
             let d = chapters.detail(&q).unwrap();
             assert_eq!(
                 (
                     d.summary.words,
+                    d.summary.letters,
                     d.summary.unique_words,
                     d.summary.first_mention_words,
                     d.summary.exclusive_words
                 ),
-                (5, 3, 3, 1)
+                (5, 22, 3, 3, 1)
             );
             let god = d
                 .word_results
@@ -472,6 +567,7 @@ mod tests {
             );
             for field in [
                 "words",
+                "letters",
                 "uniqueWords",
                 "firstMentionWords",
                 "exclusiveWords",
@@ -488,6 +584,35 @@ mod tests {
                 );
                 assert_eq!(asc.entries.len(), 3);
             }
+            let filters: ChapterFilters = serde_json::from_value(
+                serde_json::json!({"book":"genesis", "letters":22, "chapter":1}),
+            )
+            .unwrap();
+            assert_eq!(chapters.page_filtered(None, 0, None, &filters).total, 1);
+            let filters: ChapterFilters =
+                serde_json::from_value(serde_json::json!({"exclusiveWords":0})).unwrap();
+            assert_eq!(chapters.page_filtered(None, 0, None, &filters).total, 0);
+            let filtered = chapters.detail(&ChapterDetailQuery {
+                word_filters: serde_json::from_value(serde_json::json!({"word":"GO", "count":2,"letters":3,"books":1,"bibleCount":3})).unwrap(),
+                phrase_filters: serde_json::from_value(serde_json::json!({"phrase":"god alpha", "words":2,"firstMentionWords":2,"count":2,"books":1,"occurrences":2,"letters":8})).unwrap(),
+                ..q.clone()
+            }).unwrap();
+            assert_eq!(filtered.word_results.total, 1);
+            assert_eq!(filtered.word_results.entries[0].word, "god");
+            assert_eq!(filtered.phrase_results.total, 1);
+            let empty = chapters
+                .detail(&ChapterDetailQuery {
+                    word_filters: serde_json::from_value(serde_json::json!({"letters":999}))
+                        .unwrap(),
+                    phrase_filters: serde_json::from_value(serde_json::json!({"words":999}))
+                        .unwrap(),
+                    ..q.clone()
+                })
+                .unwrap();
+            assert_eq!(
+                (empty.word_results.total, empty.phrase_results.total),
+                (0, 0)
+            );
             let d = chapters
                 .detail(&ChapterDetailQuery {
                     word_sort: Some(ChapterSort {
