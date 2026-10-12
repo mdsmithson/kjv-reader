@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = PreparedPhrases::open(&output, &bible)?;
     println!("Open prepared data: {:?}", load.elapsed());
     store.prepare_verses(&bible)?;
+    let chapter_words:WordStatistics=serde_json::from_reader(File::open(output.join("words.json"))?)?;
+    let chapter_books:BookStatistics=serde_json::from_reader(File::open(output.join("books.json"))?)?;
+    store.prepare_chapters(&bible,&chapter_words,&chapter_books)?;
     let before = Instant::now();
     let verses =
         kjv_reader_lib::occurrences::prepared::PreparedVerses::open(&output, &bible, &store)?;

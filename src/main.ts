@@ -40,6 +40,12 @@ const dispatch = (action: Action, preservePosition = false) => {
     preservePosition && main
       ? { top: main.scrollTop, left: main.scrollLeft }
       : null;
+  const chapterScrolls = preservePosition
+    ? Array.from(
+        root.querySelectorAll<HTMLElement>(".chapter-table-scroll"),
+        (element) => element.scrollLeft,
+      )
+    : [];
   const catalogueLeft = preservePosition
     ? root.querySelector<HTMLElement>(".verse-catalogue-scroll")?.scrollLeft
     : undefined;
@@ -59,6 +65,12 @@ const dispatch = (action: Action, preservePosition = false) => {
       updated.scrollLeft = position.left;
     }
   }
+  root
+    .querySelectorAll<HTMLElement>(".chapter-table-scroll")
+    .forEach((element, index) => {
+      if (chapterScrolls[index] != null)
+        element.scrollLeft = chapterScrolls[index];
+    });
   if (catalogueLeft != null) {
     const scroll = root.querySelector<HTMLElement>(".verse-catalogue-scroll");
     if (scroll) scroll.scrollLeft = catalogueLeft;
@@ -357,6 +369,58 @@ const multipleStatistics = async (
 const refreshBookStatistics = () =>
   state.multiBookMode ? multipleStatistics() : statistics(state.statisticsBook);
 
+const chapterCatalogue = async (preserve = false) => {
+  const b = state.chapterBrowser;
+  dispatch(
+    {
+      type: "chapter-browser",
+      page: "chapters",
+      changes: preserve ? {} : { list: null },
+      busy: true,
+    },
+    preserve,
+  );
+  await load(
+    () => api.chaptersCatalogue(b.book, b.offset, b.sort),
+    (list) => ({ type: "chapter-browser", changes: { list }, busy: false }),
+    preserve,
+  );
+};
+const chapterProfile = async (
+  selected = state.chapterBrowser.selected,
+  preserve = false,
+  reset = false,
+) => {
+  if (!selected) return;
+  const changes = reset
+    ? {
+        selected,
+        detail: null,
+        wordOffset: 0,
+        phraseOffset: 0,
+        wordSort: { field: "word", direction: "asc" as const },
+        phraseSort: { field: "phrase", direction: "asc" as const },
+      }
+    : { selected };
+  dispatch(
+    { type: "chapter-browser", page: "chapter-detail", changes, busy: true },
+    preserve,
+  );
+  const b = state.chapterBrowser;
+  await load(
+    () =>
+      api.chapterProfile({
+        ...selected,
+        wordOffset: b.wordOffset,
+        phraseOffset: b.phraseOffset,
+        wordSort: b.wordSort,
+        phraseSort: b.phraseSort,
+      }),
+    (detail) => ({ type: "chapter-browser", changes: { detail }, busy: false }),
+    preserve,
+  );
+};
+
 const wordList = async (
   text = state.wordText,
   offset = state.wordOffset,
@@ -552,6 +616,76 @@ root.addEventListener("click", (event) => {
         ?.focus({ preventScroll: true });
     return;
   }
+  if (button.dataset.chapterSection) {
+    root
+      .querySelector(`#chapter-profile-${button.dataset.chapterSection}`)
+      ?.scrollIntoView({ block: "start" });
+    return;
+  }
+  if (button.dataset.chapterProfile) {
+    void chapterProfile(
+      {
+        book: button.dataset.book!,
+        chapter: Number(button.dataset.chapterProfile),
+      },
+      false,
+      true,
+    );
+    return;
+  }
+  if (button.dataset.chapterSort) {
+    const owner = button.dataset.chapterSort;
+    const field = button.dataset.chapterSortField!;
+    const b = state.chapterBrowser;
+    const previous =
+      owner === "catalogue"
+        ? b.sort
+        : owner === "words"
+          ? b.wordSort
+          : b.phraseSort;
+    const sort = {
+      field,
+      direction:
+        previous.field === field && previous.direction === "asc"
+          ? ("desc" as const)
+          : ("asc" as const),
+    };
+    dispatch(
+      {
+        type: "chapter-browser",
+        changes:
+          owner === "catalogue"
+            ? { sort, offset: 0 }
+            : owner === "words"
+              ? { wordSort: sort, wordOffset: 0 }
+              : { phraseSort: sort, phraseOffset: 0 },
+      },
+      true,
+    );
+    if (owner === "catalogue") void chapterCatalogue(true);
+    else void chapterProfile(undefined, true);
+    return;
+  }
+  if (button.dataset.chapterPager) {
+    const b = state.chapterBrowser,
+      step = Number(button.dataset.step) * pageSize,
+      owner = button.dataset.chapterPager;
+    dispatch(
+      {
+        type: "chapter-browser",
+        changes:
+          owner === "catalogue"
+            ? { offset: Math.max(0, b.offset + step) }
+            : owner === "words"
+              ? { wordOffset: Math.max(0, b.wordOffset + step) }
+              : { phraseOffset: Math.max(0, b.phraseOffset + step) },
+      },
+      true,
+    );
+    if (owner === "catalogue") void chapterCatalogue(true);
+    else void chapterProfile(undefined, true);
+    return;
+  }
   if (button.dataset.verseLocationRemove) {
     const filters = {
       ...readVerseFilters(),
@@ -655,6 +789,7 @@ root.addEventListener("click", (event) => {
             ? readerHighlightReturnScroll
             : 0,
       });
+    if (state.page === "chapters") void chapterCatalogue();
     if (state.page === "numbers") void numberList();
     if (state.page === "verses") void verseList();
     if (state.page === "phrases") void savedPhrases();
@@ -1042,6 +1177,14 @@ root.addEventListener("click", (event) => {
       void search({ ...state.query, offset: state.query.offset + pageSize });
       break;
     case "retry":
+      if (state.page === "chapters") {
+        void chapterCatalogue();
+        break;
+      }
+      if (state.page === "chapter-detail") {
+        void chapterProfile();
+        break;
+      }
       if (state.page === "numbers") {
         void numberList();
         break;
@@ -1095,6 +1238,14 @@ root.addEventListener("change", (event) => {
   const control = event.target as HTMLSelectElement | HTMLInputElement;
   if (control.closest("#reader-highlights-form")) {
     updateReaderHighlights(control);
+    return;
+  }
+  if (control.id === "chapters-book") {
+    dispatch({
+      type: "chapter-browser",
+      changes: { book: control.value || null, offset: 0 },
+    });
+    void chapterCatalogue();
     return;
   }
   if (control.id === "books-multiple") {

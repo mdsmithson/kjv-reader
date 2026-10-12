@@ -1,3 +1,4 @@
+import { chaptersFixture } from "./chapters-fixture.mjs";
 import { searchCount as countSearchMatches } from "./search-count-fixture.mjs";
 import { numberFixture } from "./number-fixture.mjs";
 import {
@@ -33,6 +34,17 @@ const bundle = await build({
     },
   ],
 });
+const chapterHeader = JSON.parse(
+  readFileSync("src-tauri/data/precomputed/chapters.json", "utf8"),
+);
+const chapterCatalogue = chaptersFixture(chapterHeader, (id) =>
+  JSON.parse(
+    readFileSync(
+      `src-tauri/data/precomputed/chapter-profiles/${id}.json`,
+      "utf8",
+    ),
+  ),
+);
 const source = JSON.parse(readFileSync("src-tauri/data/kjv.json", "utf8"));
 const corpus = Object.entries(source).map(([reference, text]) => {
   const [, book, chapter, number] = /^(.*) (\d+):(\d+)$/.exec(reference);
@@ -240,6 +252,10 @@ const chapterHighlights = readerHighlightFixture(
 window.__TAURI__ = {
   core: {
     invoke: async (command, args) => {
+      if (command === "chapters_catalogue")
+        return chapterCatalogue.list(args.book, args.offset, args.sort);
+      if (command === "chapter_profile")
+        return chapterCatalogue.detail(args.query);
       if (command === "reader_highlights")
         return chapterHighlights(String(args.book), Number(args.chapter));
       if (command === "verse_catalogue")
@@ -3295,6 +3311,170 @@ assert.deepEqual(
         .length;
     }),
 );
+{
+  // Chapters catalogue and profiles retain saved counts, sort globally, and link to details.
+  find('nav [data-page="chapters"]').click();
+  await pause(30);
+  const chapterReferences = () =>
+    [...window.document.querySelectorAll(".chapter-catalogue-row")].map(
+      (row) => `${row.dataset.book} ${row.dataset.chapterProfile}`,
+    );
+  assert.deepEqual(
+    chapterReferences(),
+    chapterHeader.entries
+      .slice(0, 50)
+      .map((entry) => `${entry.book} ${entry.chapter}`),
+  );
+  assert.match(
+    find(".chapters-page .result-summary").textContent,
+    /1,189 chapters/,
+  );
+  find('[data-chapter-pager="catalogue"][data-step="1"]').click();
+  await pause(30);
+  assert.deepEqual(
+    chapterReferences(),
+    chapterHeader.entries
+      .slice(50, 100)
+      .map((entry) => `${entry.book} ${entry.chapter}`),
+  );
+  find("main").scrollTop = 320;
+  find(
+    '[data-chapter-sort="catalogue"][data-chapter-sort-field="words"]',
+  ).click();
+  await pause(30);
+  assert.equal(find("main").scrollTop, 320);
+  const wordsAscending = [...chapterHeader.entries].sort(
+    (a, b) => a.words - b.words,
+  );
+  assert.deepEqual(
+    chapterReferences(),
+    wordsAscending
+      .slice(0, 50)
+      .map((entry) => `${entry.book} ${entry.chapter}`),
+  );
+  find(
+    '[data-chapter-sort="catalogue"][data-chapter-sort-field="words"]',
+  ).click();
+  await pause(30);
+  assert.deepEqual(
+    chapterReferences(),
+    [...chapterHeader.entries]
+      .sort((a, b) => b.words - a.words)
+      .slice(0, 50)
+      .map((entry) => `${entry.book} ${entry.chapter}`),
+  );
+  change("#chapters-book", "Genesis");
+  await pause(30);
+  find('[data-chapter-profile="1"][data-book="Genesis"]').click();
+  await pause(30);
+  assert.equal(find(".chapter-profile-page h1").textContent, "Genesis 1");
+  const chapterTokens = corpus
+    .filter((verse) => verse.book === "Genesis" && verse.chapter === 1)
+    .flatMap((verse) => tokenize(verse.text));
+  const uniqueChapterTokens = [...new Set(chapterTokens)];
+  const firstMentions = uniqueChapterTokens.filter((word) => {
+    const first = wordCatalogue.detail(word).firstMention;
+    return first.book === "Genesis" && first.chapter === 1;
+  });
+  const chapterExclusive = uniqueChapterTokens.filter(
+    (word) => chapterWordOwners.get(word).size === 1,
+  );
+  assert.deepEqual(
+    [...window.document.querySelectorAll(".chapter-profile-statistics dd")].map(
+      (cell) => Number(cell.textContent.replaceAll(",", "")),
+    ),
+    [
+      chapterTokens.length,
+      uniqueChapterTokens.length,
+      firstMentions.length,
+      chapterExclusive.length,
+      31,
+    ],
+  );
+  const genesisChapterProfile = JSON.parse(
+    readFileSync("src-tauri/data/precomputed/chapter-profiles/0.json", "utf8"),
+  );
+  for (const row of genesisChapterProfile.words) {
+    assert.equal(
+      row.count,
+      chapterTokens.filter((word) => word === row.word).length,
+    );
+    assert.equal(row.letters, wordCatalogue.detail(row.word).letters);
+    assert.equal(row.bibleCount, wordCatalogue.detail(row.word).count);
+  }
+  assert.deepEqual(
+    [...window.document.querySelectorAll(".chapter-word-row")].map(
+      (row) => row.dataset.word,
+    ),
+    [...uniqueChapterTokens].sort().slice(0, 50),
+  );
+  for (const [owner, selector, fields] of [
+    ["words", ".chapter-word-row", ["count", "letters", "books", "bibleCount"]],
+    [
+      "phrases",
+      ".chapter-phrase-row",
+      [
+        "words",
+        "letters",
+        "books",
+        "firstMentionWords",
+        "count",
+        "occurrences",
+      ],
+    ],
+  ]) {
+    for (const field of fields) {
+      find("main").scrollTop = 480;
+      find(
+        `[data-chapter-sort="${owner}"][data-chapter-sort-field="${field}"]`,
+      ).click();
+      await pause(30);
+      assert.equal(find("main").scrollTop, 480);
+      const expected = await chapterCatalogue.detail({
+        book: "Genesis",
+        chapter: 1,
+        wordSort: owner === "words" ? { field, direction: "asc" } : null,
+        phraseSort: owner === "phrases" ? { field, direction: "asc" } : null,
+      });
+      const entries =
+        owner === "words"
+          ? expected.wordResults.entries
+          : expected.phraseResults.entries;
+      const names = [...window.document.querySelectorAll(selector)].map(
+        (row) =>
+          owner === "words" ? row.dataset.word : row.dataset.savedPhrase,
+      );
+      assert.deepEqual(
+        names,
+        entries.map((entry) => (owner === "words" ? entry.word : entry.phrase)),
+      );
+      find(
+        `[data-chapter-sort="${owner}"][data-chapter-sort-field="${field}"]`,
+      ).click();
+      await pause(30);
+    }
+  }
+  const chapterWord = find(".chapter-word-row").dataset.word;
+  find(".chapter-word-row").click();
+  await pause(30);
+  assert.equal(find(".word-detail-page h1").textContent, chapterWord);
+  find('nav [data-page="chapters"]').click();
+  await pause(30);
+  find('[data-chapter-profile="1"][data-book="Genesis"]').click();
+  await pause(30);
+  find('[data-chapter-pager="phrases"][data-step="1"]').click();
+  await pause(30);
+  assert.deepEqual(
+    [...window.document.querySelectorAll(".chapter-phrase-row")].map(
+      (row) => row.dataset.savedPhrase,
+    ),
+    genesisChapterProfile.phrases.slice(50, 100).map((entry) => entry.phrase),
+  );
+  const chapterPhrase = find(".chapter-phrase-row").dataset.savedPhrase;
+  find(".chapter-phrase-row").click();
+  await pause(30);
+  assert.equal(find(".phrase-detail-page h1").textContent, chapterPhrase);
+}
 find('[data-page="search"]').click();
 window.__TAURI__.core.invoke = async () => {
   throw new Error("Transport unavailable");

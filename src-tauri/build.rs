@@ -157,6 +157,12 @@ fn verify_prepared() {
     assert_eq!(search["format"].as_u64(),Some(1)); assert_eq!(search["fingerprint"],manifest["fingerprint"]);
     assert_eq!(search["words"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
     assert_eq!(search["texts"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
+    let chapters:serde_json::Value=serde_json::from_slice(&fs::read(root.join("chapters.json")).expect("Prepare chapter profiles before packaging")).unwrap();
+    assert_eq!(chapters["format"].as_u64(),Some(1)); assert_eq!(chapters["fingerprint"],manifest["fingerprint"]);
+    let chapter_count=corpus.keys().map(|reference|reference.rsplit_once(':').unwrap().0).collect::<std::collections::HashSet<_>>().len();
+    assert_eq!(chapters["entries"].as_array().unwrap().len(),chapter_count);
+    assert_eq!(chapters["sizes"].as_array().unwrap().len(),chapter_count);
+    for (id,size) in chapters["sizes"].as_array().unwrap().iter().enumerate(){assert_eq!(fs::metadata(root.join("chapter-profiles").join(format!("{id}.json"))).unwrap().len(),size.as_u64().unwrap());}
     let reader: serde_json::Value = serde_json::from_slice(
         &fs::read(root.join("reader-mentions.json"))
             .expect("Prepare reader highlight metadata before packaging"),

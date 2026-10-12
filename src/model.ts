@@ -1,3 +1,4 @@
+import { initialChapterBrowser, type ChapterBrowser } from "./chapters-page";
 export type VerseFrequencySort = Readonly<{
   kind?: "words" | "phrases";
   frequency: number;
@@ -221,6 +222,7 @@ export type OccurrencePage = Readonly<{
   builtFilters?: boolean;
 }>;
 export type State = Readonly<{
+  chapterBrowser: ChapterBrowser;
   readerHighlightOptions: ReaderHighlightOptions;
   readerHighlightData: ReaderChapterHighlights | null;
   highlightSaveStatus: "" | "unsaved" | "saved" | "error";
@@ -242,6 +244,8 @@ export type State = Readonly<{
   versePhraseOffset: number;
   verseDetail: VerseDetail | null;
   page:
+    | "chapters"
+    | "chapter-detail"
     | "numbers"
     | "number-detail"
     | "verses"
@@ -311,6 +315,12 @@ export type State = Readonly<{
   error: string | null;
 }>;
 export type Action =
+  | {
+      type: "chapter-browser";
+      changes: Partial<ChapterBrowser>;
+      page?: "chapters" | "chapter-detail";
+      busy?: boolean;
+    }
   | { type: "verse-add-filter"; open: boolean }
   | {
       type: "verse-frequency-columns";
@@ -419,6 +429,7 @@ export type Action =
   | { type: "error"; error: string };
 
 export const initialState: State = {
+  chapterBrowser: initialChapterBrowser,
   page: "reader",
   readerHighlightOptions: defaultReaderHighlights,
   readerHighlightData: null,
@@ -495,6 +506,14 @@ export const initialState: State = {
 // Explicit variants keep transitions exhaustive and free of side effects.
 export const reduce = (state: State, action: Action): State => {
   switch (action.type) {
+    case "chapter-browser":
+      return {
+        ...state,
+        chapterBrowser: { ...state.chapterBrowser, ...action.changes },
+        page: action.page ?? state.page,
+        busy: action.busy ?? state.busy,
+        error: null,
+      };
     case "reader-highlight-options":
       return {
         ...state,

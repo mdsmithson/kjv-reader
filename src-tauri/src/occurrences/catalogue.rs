@@ -33,7 +33,7 @@ impl PhraseFilters {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedPhrase {
     pub phrase: String,
     #[serde(skip_serializing_if = "Option::is_none")]

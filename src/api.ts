@@ -138,3 +138,16 @@ export const copyOccurrenceData = (query: OccurrenceQuery) =>
 
 export const booksStats = (books: readonly string[]) =>
   invoke<BookStats>("books_stats", { books });
+
+export const chaptersCatalogue = (
+  book: string | null,
+  offset: number,
+  sort: import("./chapters-page").ChapterSort,
+) =>
+  invoke<import("./chapters-page").ChapterPage>("chapters_catalogue", {
+    book,
+    offset,
+    sort,
+  });
+export const chapterProfile = (query: Record<string, unknown>) =>
+  invoke<import("./chapters-page").ChapterDetail>("chapter_profile", { query });

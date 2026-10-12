@@ -49,6 +49,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(group.most_common,leaders);
         assert!(group.chapters.is_empty());
     }
+    let chapter_profiles=kjv_reader_lib::occurrences::prepared::chapters::PreparedChapters::open(&root,&bible)?;
+    let chapter_total=bible.catalog().iter().map(|book|book.chapters as usize).sum::<usize>();
+    assert_eq!(chapter_profiles.page(None,0,None).total,chapter_total);
+    let mut all_chapters=Vec::new();for offset in (0..chapter_total).step_by(50){all_chapters.extend(chapter_profiles.page(None,offset,None).entries);}
+    assert_eq!(all_chapters.iter().map(|chapter|chapter.words).sum::<usize>(),words.entries().map(|word|word.count).sum::<usize>());
+    assert_eq!(all_chapters.iter().map(|chapter|chapter.first_mention_words).sum::<usize>(),words.entries().count());
+    for (book,chapter) in [("Genesis",1),("Psalms",119),("John",11),("Revelation",22)] {
+        let chapter_data=books.get(book)?.chapters.into_iter().find(|entry|entry.chapter==chapter).unwrap();
+        let query=kjv_reader_lib::occurrences::prepared::chapters::ChapterDetailQuery {book:book.into(),chapter,word_offset:0,phrase_offset:0,word_sort:None,phrase_sort:None};
+        let before=Instant::now();let detail=chapter_profiles.detail(&query)?;
+        assert_eq!((detail.summary.words,detail.summary.unique_words,detail.summary.exclusive_words),(chapter_data.words,chapter_data.unique_words,chapter_data.exclusive_words.len()));
+        let first=words.entries().filter(|word|word.first_mention.book==book&&word.first_mention.chapter==chapter).count();assert_eq!(detail.summary.first_mention_words,first);
+        let source=bible.chapter(book,chapter)?;
+        let mut expected=std::collections::BTreeMap::<String,usize>::new();for verse in &source{for word in kjv_reader_lib::text::words(&verse.text){*expected.entry(word).or_default()+=1;}}
+        for offset in (0..detail.word_results.total).step_by(50){let page=chapter_profiles.detail(&kjv_reader_lib::occurrences::prepared::chapters::ChapterDetailQuery {word_offset:offset,book:book.into(),chapter,phrase_offset:0,word_sort:None,phrase_sort:None})?;for row in page.word_results.entries {assert_eq!(row.count,expected[&row.word]);let global=words.get(&row.word)?;assert_eq!((row.bible_count,row.books,row.letters),(global.count,global.books.len(),global.letters));}}
+        for offset in (0..detail.phrase_results.total).step_by((detail.phrase_results.total/8).max(50)){
+            let page=chapter_profiles.detail(&kjv_reader_lib::occurrences::prepared::chapters::ChapterDetailQuery {phrase_offset:offset,book:book.into(),chapter,word_offset:0,word_sort:None,phrase_sort:None})?;
+            for row in page.phrase_results.entries.iter().take(3) {
+                let tokens=kjv_reader_lib::text::words(&row.phrase.phrase);
+                let count=source.iter().map(|verse|kjv_reader_lib::text::words(&verse.text).windows(tokens.len()).filter(|window|*window==tokens).count()).sum::<usize>();assert_eq!(row.count,count);
+                let first=tokens.iter().collect::<std::collections::HashSet<_>>().iter().filter(|word|{let data=words.find_normalized(word).unwrap();data.first_mention.book==book&&data.first_mention.chapter==chapter}).count();assert_eq!(row.first_mention_words,first);
+                let phrase=store.detail(&bible,&row.phrase.phrase,0)?;assert_eq!((row.phrase.books as usize,row.phrase.occurrences as usize),(phrase.books,phrase.occurrences));
+            }
+        }
+        println!("Verified chapter {book} {chapter}: {:?}; {} words, {} phrases",before.elapsed(),detail.word_results.total,detail.phrase_results.total);
+    }
     assert_eq!(
         words.get("god")?.count,
         WordStatistics::new(&bible).get("god")?.count

@@ -1,6 +1,7 @@
 //! Read-only, build-time phrase data: fixed records, verse postings and metadata groups.
 use super::*;
 mod verses;
+pub mod chapters;
 mod search;
 mod book_counts;
 pub use book_counts::BookOccurrence;

@@ -30,6 +30,7 @@ pub fn run() {
             };
             let phrases = occurrences::prepared::PreparedPhrases::open(&prepared, &bible)?;
             app.manage(occurrences::prepared::PreparedVerses::open(&prepared, &bible, &phrases)?);
+            app.manage(occurrences::prepared::chapters::PreparedChapters::open(&prepared,&bible)?);
             app.manage(Arc::new(phrases));
             app.manage(serde_json::from_reader::<_, book_stats::BookStatistics>(std::fs::File::open(prepared.join("books.json"))?)?);
             app.manage(serde_json::from_reader::<_, word_stats::WordStatistics>(std::fs::File::open(prepared.join("words.json"))?)?);
@@ -44,6 +45,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::number_list,
             commands::number_words,
+            commands::chapters_catalogue,
+            commands::chapter_profile,
             commands::catalog,
             commands::reader_highlights,
             commands::verse_list,

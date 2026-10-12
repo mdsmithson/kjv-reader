@@ -1,3 +1,5 @@
+import { chaptersFixture } from "./chapters-fixture.mjs";
+import chapterHeader from "../src-tauri/data/precomputed/chapters.json";
 import { searchCount as countSearchMatches } from "./search-count-fixture.mjs";
 import { copyBrowserText } from "./preview-clipboard";
 import { numberFixture } from "./number-fixture.mjs";
@@ -23,6 +25,12 @@ const tokenize = (text: string) =>
   (text.match(/[\p{L}\p{N}']+/gu) ?? [])
     .map((word) => word.replace(/^'+|'+$/g, "").toLowerCase())
     .filter(Boolean);
+const chapterCatalogue = chaptersFixture(chapterHeader, async (id: number) => {
+  const response = await fetch(
+    `/src-tauri/data/precomputed/chapter-profiles/${id}.json`,
+  );
+  return response.json();
+});
 const wordCatalogue = wordFixture(verses, tokenize);
 const numberCatalogue = numberFixture(wordCatalogue);
 const phraseCatalogue = phraseFixture(verses, tokenize, wordCatalogue);
@@ -103,6 +111,10 @@ window.__TAURI__ = {
       command: string,
       args?: Record<string, unknown>,
     ): Promise<T> => {
+      if (command === "chapters_catalogue")
+        return chapterCatalogue.list(args?.book, args?.offset, args?.sort) as T;
+      if (command === "chapter_profile")
+        return (await chapterCatalogue.detail(args?.query)) as T;
       if (command === "reader_highlights")
         return chapterHighlights(
           String(args?.book),

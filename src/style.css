@@ -1620,3 +1620,61 @@ header {
 .verse-location-filter button {
   padding: 10px 12px;
 }
+
+.chapter-table-scroll {
+  overflow-x: auto;
+}
+.chapter-catalogue-heading,
+.chapter-catalogue-row,
+.chapter-word-heading,
+.chapter-word-row,
+.chapter-phrase-heading,
+.chapter-phrase-row {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+  padding: 14px 10px;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid #e1d8c8;
+  border-radius: 0;
+}
+.chapter-catalogue-heading,
+.chapter-catalogue-row {
+  grid-template-columns: minmax(140px, 1fr) 70px repeat(4, minmax(100px, 1fr));
+  min-width: 700px;
+}
+.chapter-word-heading,
+.chapter-word-row {
+  grid-template-columns: minmax(180px, 1fr) repeat(4, 100px);
+  min-width: 650px;
+}
+.chapter-phrase-heading,
+.chapter-phrase-row {
+  grid-template-columns: minmax(200px, 1fr) 60px 60px 60px 110px 90px 90px;
+  min-width: 800px;
+}
+.chapter-catalogue-heading button,
+.chapter-word-heading button,
+.chapter-phrase-heading button {
+  font-size: 12px;
+}
+.chapter-word-row .scripture,
+.chapter-phrase-row .scripture {
+  font-size: var(--scripture-size);
+  overflow-wrap: anywhere;
+}
+.chapter-profile-page > section {
+  margin-top: 40px;
+}
+.chapter-profile-statistics {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.chapter-section-links {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
