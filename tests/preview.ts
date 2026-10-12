@@ -1,3 +1,4 @@
+import { searchCount as countSearchMatches } from "./search-count-fixture.mjs";
 import { copyBrowserText } from "./preview-clipboard";
 import { numberFixture } from "./number-fixture.mjs";
 import {
@@ -284,9 +285,19 @@ window.__TAURI__ = {
                         verse.text.toLowerCase().includes(term),
                       )),
         );
+        const counted = matches.map((verse) => ({
+          ...verse,
+          occurrences: countSearchMatches(verse.text, query, tokenize),
+        }));
+        if (query.countSort)
+          counted.sort(
+            (a, b) =>
+              (a.occurrences - b.occurrences) *
+              (query.countSort === "asc" ? 1 : -1),
+          );
         return {
           total: matches.length,
-          verses: matches.slice(query.offset, query.offset + 50),
+          verses: counted.slice(query.offset, query.offset + 50),
         } as T;
       }
       if (command === "copy_occurrence_csv") {

@@ -7,7 +7,13 @@ export type NumberPage = Readonly<{
   total: number;
   entries: readonly Readonly<{ number: number; words: number }>[];
 }>;
+export type VerseSearchFilter = Readonly<{ text: string; partial: boolean }>;
 export type VerseFilters = Readonly<{
+  chapter?: number | null;
+  verse?: number | null;
+  searches?: readonly VerseSearchFilter[];
+  text?: string;
+  partial?: boolean;
   words: number | null;
   letters: number | null;
   phrases: number | null;
@@ -157,6 +163,11 @@ export type Verse = Readonly<{
   text: string;
 }>;
 export type SearchPage = Readonly<{ total: number; verses: readonly Verse[] }>;
+export type SearchVerse = Verse & Readonly<{ occurrences: number }>;
+export type BibleSearchPage = Readonly<{
+  total: number;
+  verses: readonly SearchVerse[];
+}>;
 export type Location = Readonly<{
   book: string;
   chapter: number;
@@ -169,6 +180,7 @@ export type Query = Readonly<{
   offset: number;
   partial?: boolean;
   normalizedWords?: boolean;
+  countSort?: "asc" | "desc";
   includedBooks?: readonly string[] | null;
 }>;
 export type OccurrenceQuery = Readonly<{
@@ -223,7 +235,7 @@ export type State = Readonly<{
   versePhraseFrequencies: readonly number[];
   verseFrequencySort: VerseFrequencySort | null;
   verseAddFilterOpen: boolean;
-  verseFilter: keyof VerseFilters | null;
+  verseFilter: "words" | "letters" | "phrases" | null;
   verseOffset: number;
   verseResults: VersePage | null;
   selectedVerse: Location | null;
@@ -290,7 +302,7 @@ export type State = Readonly<{
   location: Location;
   verses: readonly Verse[];
   query: Query;
-  results: SearchPage | null;
+  results: BibleSearchPage | null;
   occurrenceQuery: OccurrenceQuery;
   occurrences: OccurrencePage | null;
   size: number;
@@ -343,7 +355,12 @@ export type Action =
       filters: VerseFilters;
       preserveResults?: boolean;
     }
-  | { type: "verse-filter"; field: keyof VerseFilters; filters: VerseFilters }
+  | { type: "verse-searches"; filters: VerseFilters }
+  | {
+      type: "verse-filter";
+      field: "words" | "letters" | "phrases";
+      filters: VerseFilters;
+    }
   | { type: "verse-results"; results: VersePage }
   | {
       type: "verse-select";
@@ -392,8 +409,8 @@ export type Action =
       verses: readonly Verse[];
       highlights: ReaderChapterHighlights;
     }
-  | { type: "query"; query: Query }
-  | { type: "results"; results: SearchPage }
+  | { type: "query"; query: Query; preserveResults?: boolean }
+  | { type: "results"; results: BibleSearchPage }
   | { type: "occurrence-query"; query: OccurrenceQuery }
   | { type: "occurrences"; results: OccurrencePage }
   | { type: "size"; size: number }
@@ -520,6 +537,8 @@ export const reduce = (state: State, action: Action): State => {
     }
     case "verse-frequency-sort":
       return { ...state, verseFrequencySort: action.sort };
+    case "verse-searches":
+      return { ...state, verseFilters: action.filters };
     case "verse-filter":
       return {
         ...state,
@@ -830,7 +849,7 @@ export const reduce = (state: State, action: Action): State => {
       return {
         ...state,
         query: action.query,
-        results: null,
+        results: action.preserveResults ? state.results : null,
         busy: true,
         error: null,
       };

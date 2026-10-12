@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 const VERSION: u32 = 4;
 mod frequency;
 mod mentions;
+mod search;
 pub use frequency::{VerseFrequencyQuery, VerseFrequencySort};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VerseSummary {
@@ -17,15 +18,30 @@ pub struct VerseSummary {
     #[serde(default,rename="phraseFrequencyCounts",skip_serializing_if="Vec::is_empty")]
     pub phrase_frequency_counts: Vec<usize>,
 }
+#[derive(Clone, Deserialize)]
+pub struct VerseSearchFilter {
+    pub text: String,
+    #[serde(default)]
+    pub partial: bool,
+}
 #[derive(Clone, Default, Deserialize)]
 pub struct VerseFilters {
+    pub chapter: Option<usize>,
+    pub verse: Option<usize>,
     pub words: Option<usize>,
     pub letters: Option<usize>,
     pub phrases: Option<usize>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub searches: Vec<VerseSearchFilter>,
+    #[serde(default)]
+    pub partial: bool,
 }
 impl VerseFilters {
     fn matches(&self, verse: &VerseSummary) -> bool {
-        self.words.is_none_or(|n| verse.words == n)
+        self.chapter.is_none_or(|n| verse.verse.chapter as usize == n)
+            && self.verse.is_none_or(|n| verse.verse.number as usize == n)
+            && self.words.is_none_or(|n| verse.words == n)
             && self.letters.is_none_or(|n| verse.letters == n)
             && self.phrases.is_none_or(|n| verse.phrases == n)
     }
@@ -79,6 +95,7 @@ pub struct PreparedVerses {
     phrase_frequencies: frequency::FrequencyIndex,
     mention_flags: Vec<u8>,
     reader_phrase_counts: Vec<u32>,
+    search: search::VerseSearchIndex,
 }
 pub(super) fn word_parts(text: &str) -> Vec<VerseWord> {
     fn flush(
@@ -265,7 +282,9 @@ impl PreparedVerses {
             let (mention_flags,reader_phrase_counts)=if with_frequencies {mentions::read(root,&manifest)?}else{(Vec::new(),Vec::new())};
             let phrase_frequencies=if with_frequencies {frequency::read_phrases(root,&manifest)?}else{Default::default()};
             let frequencies = if with_frequencies {frequency::read(root,&manifest)?} else {Default::default()};
+            let search=if with_frequencies {search::VerseSearchIndex::read(root,&manifest)?}else{Default::default()};
             Ok(Self {
+                search,
                 frequencies,
                 phrase_frequencies,
                 mention_flags,
@@ -370,10 +389,11 @@ impl PreparedVerses {
                 .get(book)
                 .ok_or_else(|| format!("Book not found: {book}"))?,
         };
+        let text_query=search::VerseSearchIndex::query(filters);
         let matches = || {
             self.manifest.entries[start..end]
-                .iter()
-                .filter(|entry| filters.matches(&entry.summary))
+                .iter().enumerate()
+                .filter(|(id,entry)| filters.matches(&entry.summary) && self.search.matches(start+*id,&text_query)).map(|(_,entry)|entry)
         };
         let total = matches().count();
         let entries = matches()
@@ -492,7 +512,7 @@ impl PreparedVerses {
 impl PreparedPhrases {
     pub fn prepare_verses(&self, bible: &Bible) -> Result<(), String> {
         self.prepare_verse_data(bible)?;
-        mentions::prepare(&self.root).and_then(|_|frequency::prepare(&self.root,bible)).and_then(|_|frequency::prepare_phrases(&self.root)).map_err(|e|format!("Unable to prepare verse frequency data: {e}"))
+        mentions::prepare(&self.root).and_then(|_|frequency::prepare(&self.root,bible)).and_then(|_|frequency::prepare_phrases(&self.root)).and_then(|_|search::prepare(&self.root)).map_err(|e|format!("Unable to prepare verse frequency data: {e}"))
     }
     fn prepare_verse_data(&self, bible: &Bible) -> Result<(), String> {
         if PreparedVerses::open_base(&self.root, bible, self, false).is_ok() {
@@ -733,6 +753,7 @@ mod tests {
             words: Some(5),
             letters: Some(11),
             phrases: Some(2),
+            ..Default::default()
         };
         let filtered = verses.page_filtered(None, 0, &filters).unwrap();
         assert_eq!(filtered.total, 1);

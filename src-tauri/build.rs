@@ -153,6 +153,10 @@ fn verify_prepared() {
             * frequencies["total"].as_u64().unwrap()
             * 8
     );
+    let search:serde_json::Value=serde_json::from_slice(&fs::read(root.join("verse-search.json")).expect("Prepare verse search data before packaging")).unwrap();
+    assert_eq!(search["format"].as_u64(),Some(1)); assert_eq!(search["fingerprint"],manifest["fingerprint"]);
+    assert_eq!(search["words"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
+    assert_eq!(search["texts"].as_array().unwrap().len() as u64,verses["total"].as_u64().unwrap());
     let reader: serde_json::Value = serde_json::from_slice(
         &fs::read(root.join("reader-mentions.json"))
             .expect("Prepare reader highlight metadata before packaging"),

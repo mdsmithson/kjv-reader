@@ -10,7 +10,7 @@ use catalogue::{PhraseFilters, SavedPhrase, SavedPhrasePage};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::io::BufReader;
-pub use verses::{VerseFrequencyQuery, VerseFrequencySort, PreparedVerses, VerseDetail, VersePage, VerseWord, VerseFilters};
+pub use verses::{VerseFrequencyQuery, VerseFrequencySort, PreparedVerses, VerseDetail, VersePage, VerseWord, VerseFilters, VerseSearchFilter};
 
 const FORMAT: u32 = 1;
 const MAX_PREPARED_WORDS:u16=90;

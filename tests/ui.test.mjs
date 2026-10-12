@@ -1,3 +1,4 @@
+import { searchCount as countSearchMatches } from "./search-count-fixture.mjs";
 import { numberFixture } from "./number-fixture.mjs";
 import {
   readerHighlightFixture,
@@ -406,9 +407,19 @@ window.__TAURI__ = {
                         verse.text.toLowerCase().includes(word),
                       )),
         );
+        const counted = verses.map((verse) => ({
+          ...verse,
+          occurrences: countSearchMatches(verse.text, query, tokenize),
+        }));
+        if (query.countSort)
+          counted.sort(
+            (a, b) =>
+              (a.occurrences - b.occurrences) *
+              (query.countSort === "asc" ? 1 : -1),
+          );
         return {
           total: verses.length,
-          verses: verses.slice(query.offset, query.offset + 50),
+          verses: counted.slice(query.offset, query.offset + 50),
         };
       }
       if (command === "copy_occurrence_csv") {
@@ -1125,7 +1136,7 @@ find("#verse-frequency-form").dispatchEvent(
 );
 await pause(30);
 for (const n of [7, 22, 63919]) await addVerseFrequency(n);
-assert.equal(find('[data-action="verse-add-filter"]').disabled, true);
+assert.equal(find('[data-action="verse-add-filter"]').disabled, false);
 assert.equal(
   window.document.querySelectorAll(".verse-frequency-heading").length,
   5,
@@ -1276,7 +1287,7 @@ assert.deepEqual(
   ),
 );
 for (const n of [2, 7, 22]) await addPhraseFrequency(n);
-assert.equal(find('[data-action="verse-add-filter"]').disabled, true);
+assert.equal(find('[data-action="verse-add-filter"]').disabled, false);
 assert.equal(
   window.document.querySelectorAll(".verse-frequency-heading").length,
   5,
@@ -2820,15 +2831,20 @@ assert.match(
 assert.equal(window.document.querySelector(".book-chapters"), null);
 assert.equal(window.document.querySelector(".exclusive-phrase-section"), null);
 const selectStatisticsBook = (book, checked = true) => {
-  const input = find(`input[data-statistics-selected="${book}"]`);
-  input.checked = checked;
-  input.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const button = find(`button[data-statistics-book="${book}"]`);
+  if ((button.getAttribute("aria-pressed") === "true") !== checked)
+    button.click();
 };
 selectStatisticsBook("Genesis");
 await pause(30);
 selectStatisticsBook("Exodus");
 await pause(30);
 assert.match(find(".books-mode").textContent, /2 books selected/);
+assert.equal(
+  window.document.querySelectorAll(".book-list [data-statistics-book]").length,
+  66,
+);
+assert.equal(window.document.querySelectorAll(".book-list input").length, 0);
 assert.equal(window.document.querySelector(".book-chapters"), null);
 const groupLines = corpus.filter((verse) =>
   ["Genesis", "Exodus"].includes(verse.book),
@@ -2926,6 +2942,359 @@ find("#books-multiple").dispatchEvent(
 await pause(30);
 assert.ok(window.document.querySelector(".book-chapters"));
 assert.ok(window.document.querySelector(".exclusive-phrase-section"));
+// Verse catalogue text filters match complete words or partial text and compose with counts.
+find('nav [data-page="verses"]').click();
+await pause(30);
+for (const button of [
+  ...window.document.querySelectorAll("[data-verse-frequency-remove]"),
+])
+  button.click();
+await pause(30);
+find("#verses-book").value = "";
+for (const field of ["words", "letters", "phrases"])
+  find(`#verse-${field}-filter`).value = "";
+const submitVerseSearch = () =>
+  find("#verses-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+const verseRefs = () =>
+  [...window.document.querySelectorAll(".verse-table .verse-row")].map(
+    (row) => `${row.dataset.book} ${row.dataset.chapter}:${row.dataset.verse}`,
+  );
+find("#verse-search").value = "GOD";
+find('input[name="verse-match"][value="exact"]').checked = true;
+submitVerseSearch();
+await pause(30);
+const exactGodVerses = corpus.filter((verse) =>
+  tokenize(verse.text).includes("god"),
+);
+assert.deepEqual(
+  verseRefs(),
+  exactGodVerses
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find('[data-action="verses-next"]').click();
+await pause(30);
+assert.equal(find("#verse-search").value, "GOD");
+assert.deepEqual(
+  verseRefs(),
+  exactGodVerses
+    .slice(50, 100)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find("#verse-search").value = "od";
+submitVerseSearch();
+await pause(30);
+assert.match(find(".verses-page .notice").textContent, /No verses match/);
+find('input[name="verse-match"][value="partial"]').checked = true;
+submitVerseSearch();
+await pause(30);
+const partialOdVerses = corpus.filter((verse) =>
+  verse.text.toLowerCase().includes("od"),
+);
+assert.deepEqual(
+  verseRefs(),
+  partialOdVerses
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find('[data-verse-filter="words"]').click();
+assert.equal(find("#verse-search").value, "od");
+assert.ok(find('input[name="verse-match"][value="partial"]').checked);
+find("#verse-search").value = "In the beginning";
+find('input[name="verse-match"][value="exact"]').checked = true;
+find("#verses-book").value = "Genesis";
+find("#verse-words-filter").value = "10";
+submitVerseSearch();
+await pause(30);
+assert.deepEqual(verseRefs(), ["Genesis 1:1"]);
+find(".verse-row").click();
+await pause(30);
+find('[data-page="verses"]').click();
+await pause(30);
+assert.equal(find("#verse-search").value, "In the beginning");
+assert.equal(find("#verse-words-filter").value, "10");
+find("#verse-words-filter").value = "";
+find("#verse-search").value = "God";
+find("#verses-book").value = "";
+submitVerseSearch();
+await pause(30);
+find('[data-action="verse-add-filter"]').click();
+find("#verse-frequency-input").value = "1";
+find("#verse-frequency-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await pause(30);
+find("main").scrollTop = 400;
+find('[data-verse-frequency-sort="1"]').click();
+await pause(30);
+assert.equal(find("main").scrollTop, 400);
+assert.equal(find("#verse-search").value, "God");
+assert.deepEqual(
+  verseRefs(),
+  verseCatalogue
+    .catalogue({
+      book: null,
+      offset: 0,
+      filters: { text: "God", words: null, letters: null, phrases: null },
+      frequencies: [1],
+      sort: { frequency: 1, direction: "desc" },
+    })
+    .entries.map(
+      (entry) =>
+        `${entry.verse.book} ${entry.verse.chapter}:${entry.verse.number}`,
+    ),
+);
+find("#verse-search").value = "";
+submitVerseSearch();
+await pause(30);
+assert.equal(find("#verse-search").value, "");
+// Added searches repeatedly narrow the preceding verse results.
+for (const button of [
+  ...window.document.querySelectorAll("[data-verse-frequency-remove]"),
+])
+  button.click();
+await pause(30);
+find("#verse-search").value = "God";
+find('input[name="verse-match"][value="exact"]').checked = true;
+submitVerseSearch();
+await pause(30);
+find('[data-action="verse-search-add"]').click();
+await pause(30);
+assert.equal(find("#verse-search").value, "God");
+assert.ok(find('[data-verse-search-row="0"]'));
+find("#verse-search-1").value = "heaven";
+submitVerseSearch();
+await pause(30);
+const godHeaven = corpus.filter(
+  (verse) =>
+    tokenize(verse.text).includes("god") &&
+    tokenize(verse.text).includes("heaven"),
+);
+assert.deepEqual(
+  verseRefs(),
+  godHeaven
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find('[data-action="verse-search-add"]').click();
+await pause(30);
+assert.equal(find("#verse-search-1").value, "heaven");
+find("#verse-search-2").value = "created";
+submitVerseSearch();
+await pause(30);
+const narrowed = godHeaven.filter((verse) =>
+  tokenize(verse.text).includes("created"),
+);
+assert.ok(narrowed.length < godHeaven.length);
+assert.deepEqual(
+  verseRefs(),
+  narrowed
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find("#verse-search-2").value = "creat";
+submitVerseSearch();
+await pause(30);
+assert.match(find(".verses-page .notice").textContent, /No verses match/);
+find('input[name="verse-match-1"][value="partial"]').checked = true;
+submitVerseSearch();
+await pause(30);
+const mixed = godHeaven.filter((verse) =>
+  verse.text.toLowerCase().includes("creat"),
+);
+assert.deepEqual(
+  verseRefs(),
+  mixed
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find('[data-verse-search-remove="0"]').click();
+await pause(30);
+assert.equal(find("#verse-search-1").value, "creat");
+assert.ok(find('input[name="verse-match-0"][value="partial"]').checked);
+assert.equal(
+  window.document.querySelectorAll("[data-verse-search-row]").length,
+  1,
+);
+const godCreat = corpus.filter(
+  (verse) =>
+    tokenize(verse.text).includes("god") &&
+    verse.text.toLowerCase().includes("creat"),
+);
+assert.deepEqual(
+  verseRefs(),
+  godCreat
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find(".verse-row").click();
+await pause(30);
+find('[data-page="verses"]').click();
+await pause(30);
+assert.equal(find("#verse-search-1").value, "creat");
+find('[data-verse-search-remove="0"]').click();
+await pause(30);
+assert.equal(
+  window.document.querySelectorAll("[data-verse-search-row]").length,
+  0,
+);
+assert.deepEqual(
+  verseRefs(),
+  exactGodVerses
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+// Chapter and verse-number filters compose with the retained text search.
+const addLocationFilter = async (kind, value) => {
+  find('[data-action="verse-add-filter"]').click();
+  change("#verse-frequency-kind", kind);
+  assert.equal(
+    find("#verse-filter-value-label").textContent,
+    kind === "chapter" ? "Chapter number" : "Verse number",
+  );
+  find("#verse-frequency-input").value = String(value);
+  find("#verse-frequency-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+  await pause(30);
+};
+await addLocationFilter("chapter", 3);
+assert.equal(find("#verse-chapter-filter").value, "3");
+const godChapter3 = exactGodVerses.filter((verse) => verse.chapter === 3);
+assert.deepEqual(
+  verseRefs(),
+  godChapter3
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+await addLocationFilter("verse", 16);
+assert.equal(find("#verse-number-filter").value, "16");
+const god3_16 = godChapter3.filter((verse) => verse.number === 16);
+assert.deepEqual(
+  verseRefs(),
+  god3_16.map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+find(".verse-row").click();
+await pause(30);
+find('[data-page="verses"]').click();
+await pause(30);
+assert.equal(find("#verse-chapter-filter").value, "3");
+assert.equal(find("#verse-number-filter").value, "16");
+change("#verses-book", "John");
+await pause(30);
+assert.deepEqual(verseRefs(), ["John 3:16"]);
+find("#verse-number-filter").value = "17";
+submitVerseSearch();
+await pause(30);
+assert.deepEqual(verseRefs(), ["John 3:17"]);
+find('[data-verse-location-remove="chapter"]').click();
+await pause(30);
+assert.equal(find("#verse-chapter-filter"), null);
+assert.ok(verseRefs().every((ref) => ref.endsWith(":17")));
+find('[data-verse-location-remove="verse"]').click();
+await pause(30);
+assert.equal(find("#verse-number-filter"), null);
+find("#verses-book").value = "";
+submitVerseSearch();
+await pause(30);
+// Search occurrence counts sort the entire result set and preserve scroll.
+find('nav [data-page="search"]').click();
+find("#query").value = "God";
+find('input[name="phrase"]').checked = false;
+find('input[name="partial"]').checked = false;
+find("#search-book").value = "";
+const submitBibleSearch = () =>
+  find("#search-form").dispatchEvent(
+    new window.Event("submit", { bubbles: true, cancelable: true }),
+  );
+submitBibleSearch();
+await pause(30);
+const expectedGodMatches = corpus
+  .map((verse) => ({
+    ...verse,
+    occurrences: tokenize(verse.text).filter((word) => word === "god").length,
+  }))
+  .filter((verse) => verse.occurrences > 0);
+const displayedSearchCounts = () =>
+  [...window.document.querySelectorAll(".search-verse-occurrences")].map(
+    (cell) => Number(cell.textContent),
+  );
+const displayedSearchReferences = () =>
+  [...window.document.querySelectorAll(".search-result-row .result")].map(
+    (button) =>
+      `${button.dataset.book} ${button.dataset.chapter}:${button.dataset.verse}`,
+  );
+assert.deepEqual(
+  displayedSearchCounts(),
+  expectedGodMatches.slice(0, 50).map((verse) => verse.occurrences),
+);
+find("main").scrollTop = 450;
+find("#search-occurrence-sort").click();
+await pause(30);
+assert.equal(find("main").scrollTop, 450);
+const descendingGod = [...expectedGodMatches].sort(
+  (a, b) => b.occurrences - a.occurrences,
+);
+assert.deepEqual(
+  displayedSearchReferences(),
+  descendingGod
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+assert.deepEqual(
+  displayedSearchCounts(),
+  descendingGod.slice(0, 50).map((verse) => verse.occurrences),
+);
+assert.equal(
+  find('.search-results-heading [role="columnheader"]').getAttribute(
+    "aria-sort",
+  ),
+  "descending",
+);
+find('[data-action="search-next"]').click();
+await pause(30);
+assert.deepEqual(
+  displayedSearchCounts(),
+  descendingGod.slice(50, 100).map((verse) => verse.occurrences),
+);
+find("main").scrollTop = 375;
+find("#search-occurrence-sort").click();
+await pause(30);
+assert.equal(find("main").scrollTop, 375);
+const ascendingGod = [...expectedGodMatches].sort(
+  (a, b) => a.occurrences - b.occurrences,
+);
+assert.deepEqual(
+  displayedSearchReferences(),
+  ascendingGod
+    .slice(0, 50)
+    .map((verse) => `${verse.book} ${verse.chapter}:${verse.number}`),
+);
+assert.equal(
+  find('.search-results-heading [role="columnheader"]').getAttribute(
+    "aria-sort",
+  ),
+  "ascending",
+);
+find("#query").value = "and the";
+find('input[name="phrase"]').checked = true;
+submitBibleSearch();
+await pause(30);
+assert.deepEqual(
+  displayedSearchCounts(),
+  corpus
+    .filter((verse) =>
+      ` ${tokenize(verse.text).join(" ")} `.includes(" and the "),
+    )
+    .slice(0, 50)
+    .map((verse) => {
+      const words = tokenize(verse.text);
+      return words.filter((word, i) => word === "and" && words[i + 1] === "the")
+        .length;
+    }),
+);
 find('[data-page="search"]').click();
 window.__TAURI__.core.invoke = async () => {
   throw new Error("Transport unavailable");

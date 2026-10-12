@@ -1,3 +1,4 @@
+import { searchCount } from "./search-count-fixture.mjs";
 import { wordRows, ordered } from "./detail-fixture.mjs";
 // Independent string-based verse oracle for preview and UI command tests.
 export const verseFixture = (
@@ -12,6 +13,19 @@ export const verseFixture = (
     verse,
     tokens: tokenize(verse.text),
   }));
+  const textMatches = (line, filters) =>
+    [
+      { text: filters.text, partial: filters.partial },
+      ...(filters.searches ?? []),
+    ].every(
+      (search) =>
+        !search.text?.trim() ||
+        searchCount(
+          line.verse.text,
+          { text: search.text, phrase: true, partial: search.partial },
+          tokenize,
+        ) > 0,
+    );
   const summaries = new Map();
   const details = new Map();
   const phrasesFor = (tokens) => {
@@ -101,6 +115,9 @@ export const verseFixture = (
       const matches = lines.filter(
         (line) =>
           (book == null || line.verse.book === book) &&
+          textMatches(line, filters) &&
+          (filters.chapter == null || line.verse.chapter === filters.chapter) &&
+          (filters.verse == null || line.verse.number === filters.verse) &&
           (filters.words == null || line.tokens.length === filters.words) &&
           (filters.letters == null ||
             (line.verse.text.match(/\p{Alphabetic}/gu) ?? []).length ===
@@ -133,6 +150,9 @@ export const verseFixture = (
       const matches = lines.filter(
         (line) =>
           (book == null || line.verse.book === book) &&
+          textMatches(line, filters) &&
+          (filters.chapter == null || line.verse.chapter === filters.chapter) &&
+          (filters.verse == null || line.verse.number === filters.verse) &&
           (filters.words == null || line.tokens.length === filters.words) &&
           (filters.letters == null ||
             (line.verse.text.match(/\p{Alphabetic}/gu) ?? []).length ===

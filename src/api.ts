@@ -9,7 +9,6 @@ import type {
   BookStats,
   Location,
   Query,
-  SearchPage,
   Verse,
   OccurrenceQuery,
   OccurrencePage,
@@ -41,7 +40,8 @@ export const chapter = (location: Location) =>
     book: location.book,
     chapter: location.chapter,
   });
-export const search = (query: Query) => invoke<SearchPage>("search", { query });
+export const search = (query: Query) =>
+  invoke<import("./model").BibleSearchPage>("search", { query });
 export const occurrences = (query: OccurrenceQuery) =>
   invoke<OccurrencePage>("occurrences", {
     query: {

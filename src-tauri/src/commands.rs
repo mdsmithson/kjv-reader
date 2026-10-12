@@ -1,5 +1,5 @@
 //! Thin IPC adapters: domain logic belongs in bible.rs.
-use crate::bible::{Bible, Book, SearchPage, SearchQuery, Verse};
+use crate::bible::{Bible, Book, SearchQuery, Verse};
 use crate::occurrences::{OccurrenceIndex, OccurrencePage, OccurrenceQuery};
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ pub fn chapter(
 }
 
 #[tauri::command]
-pub fn search(query: SearchQuery, bible: tauri::State<'_, Bible>) -> SearchPage {
+pub fn search(query: SearchQuery, bible: tauri::State<'_, Bible>) -> crate::bible::BibleSearchPage {
     bible.search(&query)
 }
 

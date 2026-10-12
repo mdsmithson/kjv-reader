@@ -5,7 +5,7 @@ import {
   pageSize,
   reference,
   type State,
-  type Verse,
+  type SearchVerse,
   type Query,
 } from "./model";
 import {
@@ -29,12 +29,12 @@ import { occurrenceView } from "./occurrence-page";
 const disabled = (condition: boolean) => (condition ? " disabled" : "");
 const selected = (condition: boolean) => (condition ? " selected" : "");
 const resultMarkup = (
-  verse: Verse,
+  verse: SearchVerse,
   query: Query,
-) => `<button class="result" data-book="${escape(verse.book)}" data-chapter="${verse.chapter}" data-verse="${verse.number}">
+) => `<div class="search-result-row"><button class="result" data-book="${escape(verse.book)}" data-chapter="${verse.chapter}" data-verse="${verse.number}">
   <span class="result-reference">${escape(reference(verse))}<span aria-hidden="true">↗</span></span>
   <span class="scripture">${highlighted(verse.text, query)}</span>
-</button>`;
+</button><span class="search-verse-occurrences" aria-label="${verse.occurrences} occurrences in this verse">${verse.occurrences.toLocaleString()}</span></div>`;
 const options = (state: State, current: string | null) =>
   state.books
     .map(
@@ -67,7 +67,7 @@ ${highlightOptionsView(state)}
 </article>`;
 
 const resultSummary = (state: State) => {
-  if (state.busy)
+  if (state.busy && !state.results)
     return '<p class="notice" role="status">Searching the Scriptures…</p>';
   if (!state.results)
     return '<div class="search-empty"><span aria-hidden="true">✦</span><h2>A word. A verse. A discovery.</h2><p>Search all 66 books, or choose a single book.<br>Results open directly in their chapter.</p></div>';
@@ -75,6 +75,7 @@ const resultSummary = (state: State) => {
   if (!total)
     return '<p class="notice" role="status">No verses found. Try fewer words or a different phrase.</p>';
   return `<div class="result-summary" role="status"><strong>${total.toLocaleString()} verses found</strong><span>${state.query.offset + 1}–${state.query.offset + verses.length} of ${total.toLocaleString()}</span></div>
+    <div class="search-results-heading"><span>Verse</span><span role="columnheader" aria-sort="${state.query.countSort === "asc" ? "ascending" : state.query.countSort === "desc" ? "descending" : "none"}"><button id="search-occurrence-sort" data-action="search-sort-count" aria-label="Sort by occurrences in verse"${disabled(state.busy)}>Occurrences ${state.query.countSort === "asc" ? "↑" : state.query.countSort === "desc" ? "↓" : "↕"}</button></span></div>
     <div class="results">${verses.map((verse) => resultMarkup(verse, state.query)).join("")}</div>
     <div class="chapter-navigation"><button data-action="search-previous"${disabled(state.query.offset === 0)}>← Previous results</button><span>Page ${Math.floor(state.query.offset / pageSize) + 1}</span><button data-action="search-next"${disabled(state.query.offset + pageSize >= total)}>Next results →</button></div>`;
 };
@@ -85,6 +86,7 @@ const search = (
   <form id="search-form"><div class="search-box"><input id="query" name="text" aria-label="Search words or phrase" placeholder="e.g. In the beginning" value="${escape(state.query.text)}" required maxlength="250"><button class="primary" type="submit">Search <span aria-hidden="true">→</span></button></div>
   <div class="search-filters"><label>Within<select name="book" id="search-book"><option value="">All books</option>${options(state, state.query.book)}</select></label><label class="checkbox"><input name="phrase" type="checkbox"${state.query.phrase ? " checked" : ""}> Exact phrase</label><label class="checkbox"><input name="partial" type="checkbox"${state.query.partial ? " checked" : ""}> Partial match</label><span>Case insensitive · ${state.query.partial ? "Partial matches" : "Whole words"} · ${state.query.phrase ? "Words in order" : "Any order"}</span></div></form>
   ${state.query.normalizedWords ? '<p class="counting-note">Viewing a counted phrase: matches ignore punctuation and require whole, consecutive words. The total below counts verses; a verse can contain more than one occurrence.</p>' : ""}
+  <p class="counting-note">Occurrences counts matches within each verse. Exact phrase searches count complete phrases, including overlapping matches; any-order searches count all matching words. Click Occurrences to sort all results, then click again to reverse.</p>
   ${resultSummary(state)}</section>`;
 
 export const presentationControls = (state: State) =>

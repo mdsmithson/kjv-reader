@@ -503,3 +503,11 @@ Occurrence filters all hide their number input while Any number is selected, pre
 Occurrence searches can restrict the number of distinct chapters containing a word or phrase: Any Number, Every Chapter of the Bible (1,189), or Exactly X Chapters. Each chapter counts once, even when the phrase repeats. Selected books determine the appearances being counted; Every Chapter still requires all Bible chapters. Chapter coverage is saved in occurrence records and reused by searches and CSV copying.
 
 Books supports selecting multiple books. Its combined view shows word and verse totals, distinct words, common words, and words exclusive to the selected set; chapter and single-book phrase sections are hidden. Group exclusivity includes words shared within the selection when none occur outside it. Statistics combine persisted per-book word frequencies and reuse recent selections.
+
+Bible search results include a sortable Occurrences column for matches within each verse. Phrase counts include overlapping consecutive matches; any-order word searches count occurrences of all distinct search words. Partial matches follow the partial-search setting. Sorting covers the full result set before pagination, keeps canonical Bible order for ties, and preserves scroll position.
+
+The Verses catalogue supports verse-text search combined with book and numeric filters and saved frequency-column sorting. Exact Match finds complete consecutive words anywhere in a verse, ignoring case and punctuation; Partial Match finds the literal entered text within words. Normalized search text is prepared once in `verse-search.json` and loaded for immediate retrieval.
+
+Add search on the Verses page adds another independently configurable word or phrase condition. Searches narrow results cumulatively, in displayed order, and combine with book and numeric filters and frequency sorting. Blank conditions are ignored; removing a condition broadens the selection while preserving the remaining searches. Every condition uses the saved verse search text.
+
+Add filter on the Verses page also offers Chapter number and Verse number. These exact reference filters can be combined, edited, or removed and narrow the current text searches and count filters across the selected books. They use the saved verse references and do not consume the five frequency-column slots.

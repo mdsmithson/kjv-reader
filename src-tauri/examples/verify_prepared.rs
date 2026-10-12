@@ -161,6 +161,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert!(numeric_phrases.entries.last().unwrap().phrase < later_phrases.entries[0].phrase);
     println!("Number 22: {} persisted phrases",numeric_phrases.total);
     let verses = PreparedVerses::open(&root, &bible, &store)?;
+    for (chapter,verse) in [(Some(3),None),(None,Some(16)),(Some(3),Some(16))] {
+        let filters=kjv_reader_lib::occurrences::prepared::VerseFilters {chapter,verse,text:Some("God".into()),..Default::default()};
+        let expected=bible.located_passages().filter(|(_,ch,v,text)|chapter.is_none_or(|n|n==*ch as usize)&&verse.is_none_or(|n|n==*v as usize)&&kjv_reader_lib::text::words(text).iter().any(|word|word=="god")).map(|(book,ch,v,_)|(book.to_owned(),ch,v)).collect::<Vec<_>>();
+        let page=verses.page_filtered(None,0,&filters)?; assert_eq!(page.total,expected.len());
+        assert_eq!(page.entries.iter().map(|entry|(entry.verse.book.clone(),entry.verse.chapter,entry.verse.number)).collect::<Vec<_>>(),expected.into_iter().take(50).collect::<Vec<_>>());
+        println!("Saved reference filters: chapter={chapter:?}, verse={verse:?}; {} matching verses",page.total);
+    }
+
+    let chained=kjv_reader_lib::occurrences::prepared::VerseFilters {text:Some("God".into()),searches:vec![kjv_reader_lib::occurrences::prepared::VerseSearchFilter {text:"heaven".into(),partial:false},kjv_reader_lib::occurrences::prepared::VerseSearchFilter {text:"created".into(),partial:false}],..Default::default()};
+    let page=verses.page_filtered(None,0,&chained)?;
+    let expected=bible.passages().filter(|(_,text)| {let words=kjv_reader_lib::text::words(text);["god","heaven","created"].iter().all(|term|words.iter().any(|word|word==term))}).count();
+    assert_eq!(page.total,expected);assert_eq!(page.total,2);
+    println!("Saved chained searches: God, heaven, created; {} verses",page.total);
+
+    for (text,partial) in [("God",false),("od",true),("In the beginning",false)] {
+        let filters=kjv_reader_lib::occurrences::prepared::VerseFilters {text:Some(text.into()),partial,..Default::default()};
+        let query=kjv_reader_lib::bible::SearchQuery {text:text.into(),book:None,phrase:true,partial,offset:0,normalized_words:false,included_books:None,count_sort:None};
+        let expected=bible.search(&query);
+        let before=Instant::now(); let page=verses.page_filtered(None,0,&filters)?;
+        assert_eq!(page.total,expected.total);
+        assert_eq!(page.entries.iter().map(|entry|(&entry.verse.book,entry.verse.chapter,entry.verse.number)).collect::<Vec<_>>(),expected.verses.iter().map(|entry|(&entry.verse.book,entry.verse.chapter,entry.verse.number)).collect::<Vec<_>>());
+        println!("Saved verse search {text:?}, partial={partial}: {:?}, {} verses",before.elapsed(),page.total);
+    }
+
     assert_eq!(verses.page(None, 0)?.total, 31_102);
     let frequencies=[1usize,2,7,22,63919];
     let expected_frequency_rows:Vec<_>=bible.located_passages().map(|(book,chapter,number,text)| {

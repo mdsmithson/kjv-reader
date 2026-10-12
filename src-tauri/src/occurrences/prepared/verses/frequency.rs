@@ -249,8 +249,9 @@ impl PreparedVerses {
                     ids.retain(|&id| (start..end).contains(&(id as usize)));
                 }
             }
+            let text_query=search::VerseSearchIndex::query(&query.filters);
             ids.retain(|&id| {
-                query
+                self.search.matches(id as usize,&text_query) && query
                     .filters
                     .matches(&self.manifest.entries[id as usize].summary)
             });

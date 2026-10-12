@@ -168,24 +168,50 @@ const updateReaderHighlights = (
   if (chapter) chapter.innerHTML = readerChapterMarkup(state);
   refreshHighlightStatus();
 };
-const readVerseFilters = (): VerseFilters =>
-  Object.fromEntries(
-    (["words", "letters", "phrases"] as const).map((field) => {
-      const input = root.querySelector<HTMLInputElement>(
-        `#verse-${field}-filter`,
-      );
-      const value = input?.valueAsNumber;
-      return [
-        field,
-        input?.value &&
-        value != null &&
-        Number.isSafeInteger(value) &&
-        value >= (field === "words" ? 1 : 0)
-          ? value
-          : null,
-      ];
+const readVerseFilters = (): VerseFilters => ({
+  searches: Array.from(
+    root.querySelectorAll<HTMLElement>("[data-verse-search-row]"),
+    (row) => ({
+      text:
+        row.querySelector<HTMLInputElement>("input[type=text]")?.value ?? "",
+      partial:
+        row.querySelector<HTMLInputElement>('input[value="partial"]')
+          ?.checked ?? false,
     }),
-  ) as VerseFilters;
+  ),
+  text:
+    root.querySelector<HTMLInputElement>("#verse-search")?.value ??
+    state.verseFilters.text ??
+    "",
+  partial:
+    root.querySelector<HTMLInputElement>(
+      'input[name="verse-match"][value="partial"]',
+    )?.checked ??
+    state.verseFilters.partial ??
+    false,
+  ...(Object.fromEntries(
+    (["words", "letters", "phrases", "chapter", "verse"] as const).map(
+      (field) => {
+        const input = root.querySelector<HTMLInputElement>(
+          field === "verse" ? "#verse-number-filter" : `#verse-${field}-filter`,
+        );
+        const value = input?.valueAsNumber;
+        return [
+          field,
+          input?.value &&
+          value != null &&
+          Number.isSafeInteger(value) &&
+          value >= (["words", "chapter", "verse"].includes(field) ? 1 : 0)
+            ? value
+            : null,
+        ];
+      },
+    ),
+  ) as Pick<
+    VerseFilters,
+    "words" | "letters" | "phrases" | "chapter" | "verse"
+  >),
+});
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
@@ -229,14 +255,21 @@ const navigate = async (location: Location) => {
   } else main?.scrollTo({ top: 0 });
 };
 
-const search = async (query: Query) => {
-  dispatch({ type: "query", query });
+const search = async (query: Query, preservePosition = false) => {
+  const scrollTop = root.querySelector("main")?.scrollTop ?? 0;
+  dispatch(
+    { type: "query", query, preserveResults: preservePosition },
+    preservePosition,
+  );
   const loaded = await load(
     () => api.search(query),
     (results) => ({ type: "results", results }),
+    preservePosition,
   );
   if (loaded && state.page === "search")
-    root.querySelector("main")?.scrollTo({ top: 0 });
+    root
+      .querySelector("main")
+      ?.scrollTo({ top: preservePosition ? scrollTop : 0 });
 };
 
 const phraseCounts = async (book: string, token: number) => {
@@ -502,6 +535,44 @@ root.addEventListener("click", (event) => {
   );
   if (!button || button.disabled) return;
   if (
+    button.dataset.action === "verse-search-add" ||
+    button.dataset.verseSearchRemove != null
+  ) {
+    const current = readVerseFilters();
+    const searches = [...(current.searches ?? [])];
+    const adding = button.dataset.action === "verse-search-add";
+    if (adding) searches.push({ text: "", partial: false });
+    else searches.splice(Number(button.dataset.verseSearchRemove), 1);
+    const filters = { ...current, searches };
+    dispatch({ type: "verse-searches", filters }, true);
+    void verseList(state.verseBook, 0, filters, true);
+    if (adding)
+      root
+        .querySelector<HTMLInputElement>(`#verse-search-${searches.length}`)
+        ?.focus({ preventScroll: true });
+    return;
+  }
+  if (button.dataset.verseLocationRemove) {
+    const filters = {
+      ...readVerseFilters(),
+      [button.dataset.verseLocationRemove]: null,
+    };
+    dispatch({ type: "verse-searches", filters }, true);
+    void verseList(state.verseBook, 0, filters, true);
+    return;
+  }
+  if (button.dataset.action === "search-sort-count") {
+    void search(
+      {
+        ...state.query,
+        countSort: state.query.countSort === "desc" ? "asc" : "desc",
+        offset: 0,
+      },
+      true,
+    );
+    return;
+  }
+  if (
     button.dataset.action === "books-select-all" ||
     button.dataset.action === "books-select-none"
   ) {
@@ -675,7 +746,7 @@ root.addEventListener("click", (event) => {
     dispatch(
       {
         type: "verse-filter",
-        field: button.dataset.verseFilter as keyof VerseFilters,
+        field: button.dataset.verseFilter as "words" | "letters" | "phrases",
         filters: readVerseFilters(),
       },
       true,
@@ -766,7 +837,19 @@ root.addEventListener("click", (event) => {
     return;
   }
   if (button.dataset.statisticsBook) {
-    void statistics(button.dataset.statisticsBook);
+    if (state.multiBookMode) {
+      const book = button.dataset.statisticsBook;
+      const selected = state.statisticsBooks.includes(book);
+      void multipleStatistics(
+        state.books
+          .filter((entry) =>
+            entry.name === book
+              ? !selected
+              : state.statisticsBooks.includes(entry.name),
+          )
+          .map((entry) => entry.name),
+      );
+    } else void statistics(button.dataset.statisticsBook);
     return;
   }
   if (button.dataset.phrase) {
@@ -1021,16 +1104,6 @@ root.addEventListener("change", (event) => {
     );
     return;
   }
-  if (control.dataset.statisticsSelected) {
-    const books = Array.from(
-      root.querySelectorAll<HTMLInputElement>(
-        "input[data-statistics-selected]:checked",
-      ),
-      (input) => input.dataset.statisticsSelected!,
-    );
-    void multipleStatistics(books);
-    return;
-  }
   if (control.id === "verses-book") {
     void verseList(control.value || null, 0, readVerseFilters());
     return;
@@ -1040,10 +1113,24 @@ root.addEventListener("change", (event) => {
     control.form
   )
     syncOptionalControls(control.form);
-  if (control.id === "verse-frequency-kind")
+  if (control.id === "verse-frequency-kind") {
     root
       .querySelector<HTMLInputElement>("#verse-frequency-input")
       ?.setCustomValidity("");
+    const location = control.value === "chapter" || control.value === "verse";
+    const label = root.querySelector("#verse-filter-value-label");
+    if (label)
+      label.textContent = location
+        ? control.value === "chapter"
+          ? "Chapter number"
+          : "Verse number"
+        : "Occurrences across the Bible (X)";
+    const help = root.querySelector("#verse-add-filter-help");
+    if (help)
+      help.textContent = location
+        ? `Keep only verses whose ${control.value === "chapter" ? "chapter" : "verse"} number is exactly this value.`
+        : "Add a column counting words or phrases with this Bible-wide occurrence count.";
+  }
   if (control.id === "book") void navigate({ book: control.value, chapter: 1 });
   if (control.id === "chapter")
     void navigate({
@@ -1082,11 +1169,18 @@ root.addEventListener("submit", (event) => {
     input.setCustomValidity("");
     if (!form.reportValidity()) return;
     const frequency = input.valueAsNumber;
-    const kind =
-      form.querySelector<HTMLSelectElement>("#verse-frequency-kind")?.value ===
-      "phrases"
-        ? "phrases"
-        : "words";
+    const selectedKind = form.querySelector<HTMLSelectElement>(
+      "#verse-frequency-kind",
+    )?.value;
+    if (selectedKind === "chapter" || selectedKind === "verse") {
+      if (!Number.isSafeInteger(frequency) || frequency < 1) return;
+      const filters = { ...readVerseFilters(), [selectedKind]: frequency };
+      dispatch({ type: "verse-searches", filters }, true);
+      dispatch({ type: "verse-add-filter", open: false }, true);
+      void verseList(state.verseBook, 0, filters, true);
+      return;
+    }
+    const kind = selectedKind === "phrases" ? "phrases" : "words";
     const columns =
       kind === "words" ? state.verseFrequencies : state.versePhraseFrequencies;
     if (columns.includes(frequency)) {

@@ -41,6 +41,8 @@ pub struct SearchQuery {
     #[serde(default)]
     pub normalized_words: bool,
     pub included_books: Option<Vec<String>>,
+    #[serde(default)]
+    pub count_sort: Option<SearchCountSort>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +50,15 @@ pub struct SearchPage {
     pub total: usize,
     pub verses: Vec<Verse>,
 }
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchCountSort { Asc, Desc }
+#[derive(Debug, Serialize)]
+pub struct SearchVerse { #[serde(flatten)] pub verse: Verse, pub occurrences: usize }
+impl std::ops::Deref for SearchVerse { type Target=Verse; fn deref(&self)->&Verse { &self.verse } }
+#[derive(Debug, Serialize)]
+pub struct BibleSearchPage { pub total: usize, pub verses: Vec<SearchVerse> }
 
 pub const PAGE_SIZE: usize = 50;
 
@@ -140,10 +151,11 @@ impl Bible {
             .ok_or_else(|| format!("Chapter not found: {book} {chapter}"))
     }
 
-    pub fn search(&self, query: &SearchQuery) -> SearchPage {
+    pub fn search(&self, query: &SearchQuery) -> BibleSearchPage {
         let normalized = query.text.trim().to_lowercase();
         let terms: Vec<_> = normalized.split_whitespace().collect();
         let word_query = crate::text::word_text(&query.text);
+        let query_words = crate::text::words(&query.text);
         let matches = |indexed: &&IndexedVerse| {
             !terms.is_empty()
                 && query
@@ -154,7 +166,7 @@ impl Bible {
                 && if query.normalized_words {
                     word_query != "  " && indexed.word_text.contains(&word_query)
                 } else if !query.partial {
-                    let words = crate::text::words(&query.text);
+                    let words = &query_words;
                     !words.is_empty() && if query.phrase { indexed.word_text.contains(&word_query) } else {
                         words.iter().all(|word| indexed.word_text.contains(&format!(" {word} ")))
                     }
@@ -164,14 +176,27 @@ impl Bible {
                     terms.iter().all(|term| indexed.normalized.contains(term))
                 }
         };
-        let matching = || self.verses.iter().filter(matches);
-        SearchPage {
-            total: matching().count(),
-            verses: matching()
-                .skip(query.offset)
-                .take(PAGE_SIZE)
-                .map(to_verse)
-                .collect(),
+        let occurrences = |indexed: &IndexedVerse| {
+            if query.normalized_words || (!query.partial && query.phrase) {
+                let tokens=indexed.word_text.split_whitespace().collect::<Vec<_>>();
+                if query_words.is_empty() { return 0; }
+                tokens.windows(query_words.len()).filter(|window|window.iter().zip(&query_words).all(|(word,term)|*word==term)).count()
+            } else if !query.partial {
+                indexed.word_text.split_whitespace().filter(|word|query_words.iter().any(|term|term==word)).count()
+            } else {
+                let needles=if query.phrase {vec![normalized.as_str()]} else { terms.iter().copied().collect::<std::collections::BTreeSet<_>>().into_iter().collect() };
+                needles.iter().filter(|term|!term.is_empty()).map(|term| indexed.normalized.char_indices().filter(|(start,_)|indexed.normalized[*start..].starts_with(*term)).count()).sum()
+            }
+        };
+        let mut matching=self.verses.iter().filter(matches).map(|indexed|(indexed,occurrences(indexed))).collect::<Vec<_>>();
+        match query.count_sort {
+            Some(SearchCountSort::Asc)=>matching.sort_by_key(|(_,count)|*count),
+            Some(SearchCountSort::Desc)=>matching.sort_by_key(|(_,count)|std::cmp::Reverse(*count)),
+            None=>{},
+        }
+        BibleSearchPage {
+            total:matching.len(),
+            verses:matching.into_iter().skip(query.offset).take(PAGE_SIZE).map(|(indexed,occurrences)|SearchVerse {verse:to_verse(indexed),occurrences}).collect(),
         }
     }
 }
@@ -179,6 +204,40 @@ impl Bible {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_counts_whole_words_overlapping_phrases_and_partial_matches() {
+        let bible=Bible::from_json(r#"{"Genesis 1:1":"God, god godhead God's.","Genesis 1:2":"god god god","Genesis 1:3":"God word God, word.","Genesis 1:4":"a a a"}"#).unwrap();
+        let mut request=query("god");
+        assert_eq!(bible.search(&request).verses[0].occurrences,2);
+        request.partial=true; assert_eq!(bible.search(&request).verses[0].occurrences,4);
+        request=query("god god"); request.phrase=true;
+        assert_eq!(bible.search(&request).verses.iter().map(|verse|verse.occurrences).collect::<Vec<_>>(),vec![1,2]);
+        request=query("god word"); assert_eq!(bible.search(&request).verses[0].occurrences,4);
+        request.phrase=true; assert_eq!(bible.search(&request).verses[0].occurrences,2);
+        request=query("a a"); request.phrase=true; assert_eq!(bible.search(&request).verses[0].occurrences,2);
+        request.partial=true; assert_eq!(bible.search(&request).verses[0].occurrences,2);
+        request.phrase=false; assert_eq!(bible.search(&request).verses.iter().find(|verse|verse.number==4).unwrap().occurrences,3);
+        request=query(" GOD, word"); request.normalized_words=true; request.partial=true;
+        assert_eq!(bible.search(&request).verses[0].occurrences,2);
+    }
+    #[test]
+    fn search_count_sort_orders_the_entire_result_set_before_paging() {
+        let source: serde_json::Map<String,serde_json::Value>=(1..=130).map(|n|(format!("Genesis 1:{n}"), serde_json::json!(vec!["god";n%5+1].join(" ")))).collect();
+        let bible=Bible::from_json(&serde_json::to_string(&source).unwrap()).unwrap();
+        let mut request=query("god");
+        assert_eq!(bible.search(&request).verses[0].number,1);
+        for sort in [SearchCountSort::Asc,SearchCountSort::Desc] {
+            request.count_sort=Some(sort);
+            let mut expected=(1..=130).map(|n|(n as u16,n%5+1)).collect::<Vec<_>>();
+            expected.sort_by_key(|(_,count)|match sort {SearchCountSort::Asc=>*count as i32,SearchCountSort::Desc=>-(*count as i32)});
+            let actual=[0,50,100].into_iter().flat_map(|offset|{
+                request.offset=offset; let page=bible.search(&request); assert_eq!(page.total,130);
+                page.verses.into_iter().map(|verse|(verse.number,verse.occurrences)).collect::<Vec<_>>()
+            }).collect::<Vec<_>>();
+            assert_eq!(actual,expected);
+        }
+    }
 
     #[test]
     fn whole_words_are_default_and_partial_matches_are_optional() {
@@ -204,6 +263,7 @@ mod tests {
             offset: 0,
             normalized_words: false,
             included_books: None,
+            count_sort: None,
         }
     }
 
