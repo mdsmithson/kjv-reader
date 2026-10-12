@@ -68,6 +68,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let phrase = &page.entries[0].phrase;
         let actual = store.detail(&bible, phrase, 0)?;
+        let saved_books=store.book_counts(phrase)?;
+        let tokens=kjv_reader_lib::text::words(phrase);
+        let mut expected_books=std::collections::BTreeMap::<String,u32>::new();
+        for (book,text) in bible.passages() {
+            let count=kjv_reader_lib::text::words(text).windows(tokens.len()).filter(|window| *window==tokens).count() as u32;
+            if count>0 { *expected_books.entry(book.to_owned()).or_default() += count; }
+        }
+        assert_eq!(saved_books.iter().map(|row|(row.book.clone(),row.occurrences)).collect::<std::collections::BTreeMap<_,_>>(),expected_books);
+        let exact=store.page(0,&PhraseFilters {text:Some(phrase.to_uppercase()),exact:true,..Default::default()})?;
+        assert_eq!(exact.total,1); assert_eq!(exact.entries[0].phrase,*phrase);
         let expected = phrase_stats::details(&bible, phrase, 0)?;
         assert_eq!(
             serde_json::to_value(actual)?,
@@ -336,7 +346,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokens
         );
     }
-    for (book, chapter) in [("Genesis", 1), ("Genesis", 2), ("John", 11)] {
+    let mut last_words=std::collections::HashMap::<String,(String,u16,u16,usize)>::new();
+    for (book,chapter,number,text) in bible.located_passages() {
+        for (position,word) in kjv_reader_lib::text::words(text).into_iter().enumerate() {last_words.insert(word,(book.into(),chapter,number,position));}
+    }
+    for (book, chapter) in [("Genesis", 1), ("Genesis", 2), ("John", 11),("Revelation",22),("Daniel",4)] {
         let before = Instant::now();
         let highlights = verses.highlights(&store, &words, &books, book, chapter)?;
         println!(
@@ -350,8 +364,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .find(|entry| entry.chapter == chapter)
             .unwrap();
         for verse in &highlights.verses {
+            let detail=verses.detail(&store,book,chapter,verse.number,0)?;
+            assert_eq!(verse.phrases.len(),detail.summary.phrases);
+            let listed:Vec<_>=(0..detail.phrase_results.total).step_by(50).flat_map(|offset|verses.detail(&store,book,chapter,verse.number,offset).unwrap().phrase_results.entries).collect();
+            let mut expected_counts:Vec<_>=listed.iter().map(|phrase|phrase.occurrences as usize).collect();let mut actual_counts:Vec<_>=verse.phrases.iter().map(|phrase|phrase.count).collect();expected_counts.sort();actual_counts.sort();assert_eq!(actual_counts,expected_counts);
+            let text=detail.summary.verse.text;let units:Vec<_>=text.encode_utf16().collect();
+            for phrase in &verse.phrases {let text=String::from_utf16(&units[phrase.start as usize..phrase.end as usize])?;assert_eq!(store.detail(&bible,&text,0)?.occurrences,phrase.count);}
+
             let mut seen = std::collections::HashSet::new();
-            for word in &verse.words {
+            for (position,word) in verse.words.iter().enumerate() {
                 let expected = words.get(&word.word)?;
                 assert_eq!(word.count, expected.count);
                 assert_eq!(
@@ -362,6 +383,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .any(|entry| entry.word == word.word)
                 );
                 let first = &expected.first_mention;
+                assert_eq!(word.last_mention,last_words.get(&word.word)==Some(&(book.to_owned(),chapter,verse.number,position)));
                 assert_eq!(
                     word.first_mention,
                     first.book == book

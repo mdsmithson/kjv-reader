@@ -4,6 +4,7 @@ use crate::bible::{Verse, PAGE_SIZE};
 use serde::{Deserialize, Serialize};
 const VERSION: u32 = 4;
 mod frequency;
+mod mentions;
 pub use frequency::{VerseFrequencyQuery, VerseFrequencySort};
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VerseSummary {
@@ -76,6 +77,8 @@ pub struct PreparedVerses {
     books: BTreeMap<String, (usize, usize)>,
     frequencies: frequency::FrequencyIndex,
     phrase_frequencies: frequency::FrequencyIndex,
+    mention_flags: Vec<u8>,
+    reader_phrase_counts: Vec<u32>,
 }
 pub(super) fn word_parts(text: &str) -> Vec<VerseWord> {
     fn flush(
@@ -259,11 +262,14 @@ impl PreparedVerses {
                 return Err(invalid("Invalid verse directory totals"));
             }
             for entry in &mut manifest.entries { entry.summary.phrases=entry.display_phrases; }
+            let (mention_flags,reader_phrase_counts)=if with_frequencies {mentions::read(root,&manifest)?}else{(Vec::new(),Vec::new())};
             let phrase_frequencies=if with_frequencies {frequency::read_phrases(root,&manifest)?}else{Default::default()};
             let frequencies = if with_frequencies {frequency::read(root,&manifest)?} else {Default::default()};
             Ok(Self {
                 frequencies,
                 phrase_frequencies,
+                mention_flags,
+                reader_phrase_counts,
                 root: root.into(),
                 manifest,
                 locations,
@@ -293,6 +299,7 @@ impl PreparedVerses {
             .collect();
         let run = || -> io::Result<crate::reader_highlights::ChapterHighlights> {
             let mut file = File::open(self.root.join("verse-words.bin"))?;
+            let mut display=File::open(self.root.join("verse-display.bin"))?;
             let mut verses = Vec::new();
             for ((_, _, number), &id) in self
                 .locations
@@ -301,8 +308,7 @@ impl PreparedVerses {
                 let entry = &self.manifest.entries[id];
                 file.seek(SeekFrom::Start(entry.word_start * 12))?;
                 let mut words = Vec::with_capacity(entry.summary.words);
-                let mut first_seen = HashSet::new();
-                for _ in 0..entry.summary.words {
+                for word_index in 0..entry.summary.words {
                     let start = read_u32(&mut file)?;
                     let end = read_u32(&mut file)?;
                     let token = read_u32(&mut file)?;
@@ -313,10 +319,9 @@ impl PreparedVerses {
                     let data = stats
                         .find_normalized(word)
                         .ok_or_else(|| invalid("Missing saved word statistics"))?;
-                    let first_mention = data.first_mention.book == book
-                        && data.first_mention.chapter == chapter
-                        && data.first_mention.number == *number
-                        && first_seen.insert(word.clone());
+                    let flags=self.mention_flags[entry.word_start as usize+word_index];
+                    let first_mention=flags&1!=0;
+                    let last_mention=flags&2!=0;
                     words.push(crate::reader_highlights::HighlightWord {
                         start,
                         end,
@@ -324,11 +329,18 @@ impl PreparedVerses {
                         count: data.count,
                         exclusive: exclusive.contains(word.as_str()),
                         first_mention,
+                        last_mention,
                     });
                 }
+                display.seek(SeekFrom::Start(entry.display_start*12))?;
+                let phrases=(0..entry.display_phrases).map(|rank|{
+                    let _id=read_u32(&mut display)? as usize;let start=read_u32(&mut display)?;let end=read_u32(&mut display)?;
+                    Ok(crate::reader_highlights::HighlightPhrase {start,end,count:self.reader_phrase_counts[entry.display_start as usize+rank] as usize})
+                }).collect::<io::Result<Vec<_>>>()?;
                 verses.push(crate::reader_highlights::HighlightVerse {
                     number: *number,
                     words,
+                    phrases,
                 });
             }
             if verses.is_empty() {
@@ -480,7 +492,7 @@ impl PreparedVerses {
 impl PreparedPhrases {
     pub fn prepare_verses(&self, bible: &Bible) -> Result<(), String> {
         self.prepare_verse_data(bible)?;
-        frequency::prepare(&self.root,bible).and_then(|_|frequency::prepare_phrases(&self.root)).map_err(|e|format!("Unable to prepare verse frequency data: {e}"))
+        mentions::prepare(&self.root).and_then(|_|frequency::prepare(&self.root,bible)).and_then(|_|frequency::prepare_phrases(&self.root)).map_err(|e|format!("Unable to prepare verse frequency data: {e}"))
     }
     fn prepare_verse_data(&self, bible: &Bible) -> Result<(), String> {
         if PreparedVerses::open_base(&self.root, bible, self, false).is_ok() {
@@ -884,6 +896,12 @@ mod tests {
         let exodus = verses
             .highlights(&phrases, &stats, &books, "Exodus", 1)
             .unwrap();
+        assert_eq!(first.words.iter().filter(|word|word.last_mention && word.word=="god's").count(),1);
+        assert!(first.words.iter().filter(|word|word.word=="a").all(|word|!word.last_mention));
+        let final_as:Vec<_>=exodus.verses[0].words.iter().filter(|word|word.word=="a").collect();
+        assert_eq!(final_as.len(),2);assert!(!final_as[0].last_mention);assert!(final_as[1].last_mention);
+        assert_eq!(first.phrases.len(),detail.phrase_results.total);
+        assert!(first.phrases.iter().any(|phrase|phrase.start==0 && phrase.end==first.words.last().unwrap().end+2 && phrase.count==1) || first.phrases.iter().any(|phrase|phrase.count==1 && phrase.end>first.words.last().unwrap().end));
         assert!(exodus
             .verses
             .iter()

@@ -13,6 +13,8 @@ pub struct PhraseFilters {
     pub text: Option<String>,
     #[serde(default)]
     pub partial: bool,
+    #[serde(default)]
+    pub exact: bool,
 }
 impl PhraseFilters {
     fn matches(&self, entry: &SavedPhrase) -> bool {
@@ -26,7 +28,7 @@ impl PhraseFilters {
                 if text.trim().is_empty() { return true; }
                 let query = crate::text::words(text);
                 let tokens = crate::text::words(&entry.phrase);
-                !query.is_empty() && tokens.windows(query.len()).any(|window| window.iter().zip(&query).all(|(word,term)| if self.partial { word.contains(term) } else { word == term }))
+                !query.is_empty() && (!self.exact || tokens == query) && tokens.windows(query.len()).any(|window| window.iter().zip(&query).all(|(word,term)| if self.partial { word.contains(term) } else { word == term }))
             })
     }
 }

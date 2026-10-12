@@ -1,5 +1,8 @@
 import { numberFixture } from "./number-fixture.mjs";
-import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
+import {
+  readerHighlightFixture,
+  preparedHighlightSpans,
+} from "./reader-highlight-fixture.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { build } from "esbuild";
@@ -149,26 +152,54 @@ const invalidSaved = parseReaderHighlights({
     occurrences: { enabled: true, color: "#000000", count: -1 },
   },
 });
-assert.equal(invalidSaved.exclusive.color, "#f6d887");
-assert.equal(invalidSaved.firstMention.enabled, false);
-assert.equal(invalidSaved.firstMention.color, "#abcdef");
-assert.equal(invalidSaved.occurrences.count, 7);
+assert.equal(invalidSaved[0].color, "#f6d887");
+assert.equal(invalidSaved[1].enabled, false);
+assert.equal(invalidSaved[1].color, "#abcdef");
+assert.equal(invalidSaved[2].count, 7);
+const sanitized = parseReaderHighlights({
+  version: 2,
+  filters: Array.from({ length: 12 }, (_, i) => ({
+    id: "duplicate",
+    kind: "wordCount",
+    count: i === 0 ? -1 : 1,
+    color: "bad",
+    enabled: true,
+  })),
+});
+assert.equal(sanitized.length, 10);
+assert.equal(new Set(sanitized.map((rule) => rule.id)).size, 10);
+assert.equal(sanitized[0].count, 1);
+const sampleWords = [
+  {
+    start: 0,
+    end: 3,
+    word: "god",
+    count: 7,
+    exclusive: false,
+    firstMention: true,
+    lastMention: false,
+  },
+];
 const darkMarkup = readerWordHighlights(
   "God & godhead",
-  [
-    {
-      start: 0,
-      end: 3,
-      word: "god",
-      count: 7,
-      exclusive: false,
-      firstMention: true,
-    },
-  ],
-  { ...invalidSaved, firstMention: { enabled: false, color: "#abcdef" } },
+  sampleWords,
+  invalidSaved.map((rule) => ({ ...rule, enabled: rule.kind === "wordCount" })),
 );
 assert.match(darkMarkup, /background:#000000;color:#ffffff/);
 assert.match(darkMarkup, /God<\/mark> &amp; godhead/);
+const segmented = readerWordHighlights(
+  "God",
+  sampleWords,
+  Array.from({ length: 10 }, (_, i) => ({
+    id: `rule-${i}`,
+    kind: "wordCount",
+    count: 7,
+    enabled: true,
+    color: `#${String(i).repeat(6)}`,
+  })),
+);
+assert.match(segmented, /linear-gradient\(to right/);
+assert.match(segmented, /90%,#999999 100%/);
 const books = [...new Set(corpus.map((verse) => verse.book))].map((name) => ({
   name,
   chapters: Math.max(
@@ -189,10 +220,20 @@ window.HTMLElement.prototype.scrollTo = function (options) {
 window.HTMLElement.prototype.scrollIntoView = () => {};
 const pause = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
+const viewBuffer = (path) => {
+  const bytes = readFileSync(path);
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+};
 const chapterHighlights = readerHighlightFixture(
   corpus,
   wordCatalogue,
   chapterWordOwners,
+  preparedHighlightSpans(
+    JSON.parse(readFileSync("src-tauri/data/precomputed/verses.json", "utf8"))
+      .entries,
+    viewBuffer("src-tauri/data/precomputed/verse-display.bin"),
+    viewBuffer("src-tauri/data/precomputed/reader-phrase-counts.bin"),
+  ),
 );
 window.__TAURI__ = {
   core: {
@@ -508,21 +549,43 @@ assert.equal(
   find("[role=alert]")?.textContent ?? "Reader did not initialize",
 );
 assert.match(find(".verse").textContent, /In the beginning God/);
-// The reader drawer previews rules, closes without clearing highlights, and saves across sessions.
-assert.equal(
-  find("#highlight-options-toggle").getAttribute("aria-expanded"),
-  "false",
-);
-assert.ok(find("#reader-highlight-panel").hasAttribute("inert"));
-find("#highlight-options-toggle").click();
-assert.ok(find("#reader-highlight-panel").classList.contains("is-open"));
-const highlightChange = (name, value) => {
-  const input = find(`#reader-highlights-form [name="${name}"]`);
+// Highlights now live on their own page and saved custom filters follow every chapter.
+assert.equal(window.document.querySelector("#highlight-options-toggle"), null);
+const editHighlights = () => find('[data-page="highlights"]').click();
+const backToReader = () =>
+  find('.highlights-page [data-page="reader"]').click();
+const highlightRows = () => [
+  ...window.document.querySelectorAll("[data-highlight-id]"),
+];
+const setHighlight = (id, field, value) => {
+  const input = find(
+    `[data-highlight-id="${id}"] [data-highlight-field="${field}"]`,
+  );
   if (input.type === "checkbox") input.checked = value;
   else input.value = String(value);
   input.dispatchEvent(new window.Event("change", { bubbles: true }));
 };
-highlightChange("firstMention", true);
+const addHighlight = (kind, count = 1) => {
+  find('[data-action="highlight-add"]').click();
+  const id = highlightRows().at(-1).dataset.highlightId;
+  setHighlight(id, "kind", kind);
+  if (kind === "wordCount" || kind === "phraseCount")
+    setHighlight(id, "count", count);
+  return id;
+};
+find("main").scrollTop = 450;
+editHighlights();
+assert.ok(find(".highlights-page"));
+assert.equal(find("main").scrollTop, 0);
+const firstFilter = addHighlight("firstMention");
+setHighlight(firstFilter, "color", "#ffccdd");
+assert.equal(
+  find(`[data-highlight-id="${firstFilter}"] [data-highlight-field="count"]`)
+    .disabled,
+  true,
+);
+backToReader();
+assert.equal(find("main").scrollTop, 450);
 assert.equal(
   window.document.querySelectorAll(
     '#verse-1 [data-highlight-rules~="firstMention"]',
@@ -537,27 +600,28 @@ assert.equal(
   ].filter((mark) => mark.textContent.toLowerCase() === "the").length,
   1,
 );
-highlightChange("firstMentionColor", "#ffccdd");
 assert.equal(
   find('#verse-1 [data-highlight-rules~="firstMention"]').style.backgroundColor,
   "rgb(255, 204, 221)",
 );
-highlightChange("occurrences", true);
-highlightChange("count", 63919);
+editHighlights();
+const wordFilter = addHighlight("wordCount", 63919);
+backToReader();
 assert.ok(
   [
-    ...window.document.querySelectorAll(
-      '.reader-word-highlight[data-highlight-rules~="occurrences"]',
-    ),
+    ...window.document.querySelectorAll('[data-highlight-rules~="wordCount"]'),
   ].every((mark) => mark.textContent.toLowerCase() === "the"),
 );
 assert.ok(
   find(
-    '#verse-1 [data-highlight-rules="firstMention occurrences"]',
-  ).style.background.includes("linear-gradient"),
+    '#verse-1 [data-highlight-rules="firstMention wordCount"]',
+  ).style.background.includes("linear-gradient(to right"),
 );
-highlightChange("exclusive", true);
-highlightChange("exclusiveColor", "#ffed00");
+editHighlights();
+const exclusiveFilter = addHighlight("exclusive");
+setHighlight(exclusiveFilter, "color", "#ffed00");
+const phraseFilter = addHighlight("phraseCount", 1);
+const lastFilter = addHighlight("lastMention");
 const saveHighlights = () =>
   find("#reader-highlights-form").dispatchEvent(
     new window.Event("submit", { bubbles: true, cancelable: true }),
@@ -565,37 +629,47 @@ const saveHighlights = () =>
 saveHighlights();
 assert.match(find("#highlight-save-status").textContent, /options saved/);
 const savedHighlights = JSON.parse(
-  window.localStorage.getItem("kjv-reader:highlight-settings:v1"),
+  window.localStorage.getItem("kjv-reader:highlight-settings:v2"),
 );
-assert.equal(savedHighlights.options.occurrences.count, 63919);
-assert.equal(savedHighlights.options.exclusive.color, "#ffed00");
-find("#highlight-options-toggle").click();
-assert.ok(!find("#reader-highlight-panel").classList.contains("is-open"));
-assert.ok(find(".reader-word-highlight"));
+assert.equal(savedHighlights.version, 2);
+assert.equal(savedHighlights.filters.length, 5);
+assert.equal(
+  savedHighlights.filters.find((rule) => rule.id === wordFilter).count,
+  63919,
+);
+backToReader();
+assert.equal(
+  window.document.querySelectorAll(
+    '#verse-1 [data-highlight-rules~="phraseCount"]',
+  ).length,
+  10,
+);
 change("#chapter", "2");
 await pause(110);
-assert.ok(find('.reader-word-highlight[data-highlight-rules~="exclusive"]'));
 assert.ok(
   [
-    ...window.document.querySelectorAll(
-      '.reader-word-highlight[data-highlight-rules~="exclusive"]',
-    ),
+    ...window.document.querySelectorAll('[data-highlight-rules~="exclusive"]'),
   ].some((mark) => mark.textContent === "Pison"),
 );
+editHighlights();
+setHighlight(wordFilter, "count", 1);
+backToReader();
+const pison = [
+  ...window.document.querySelectorAll(".reader-word-highlight"),
+].find((mark) => mark.textContent === "Pison");
 assert.equal(
-  find('#reader-highlights-form [name="firstMentionColor"]').value,
-  "#ffccdd",
+  pison.dataset.highlightRules,
+  "firstMention wordCount exclusive phraseCount lastMention",
 );
-find("#highlight-options-toggle").click();
-highlightChange("count", 1);
-assert.ok(
-  [
-    ...window.document.querySelectorAll(
-      '[data-highlight-rules="exclusive firstMention occurrences"]',
-    ),
-  ].some((mark) => mark.textContent === "Pison"),
-);
-// A new app instance restores saved options; unsaved edits remain session-only.
+assert.ok(pison.style.background.includes("linear-gradient(to right"));
+editHighlights();
+for (let n = 0; n < 5; n++) addHighlight("wordCount", 1);
+assert.equal(highlightRows().length, 10);
+assert.equal(find('[data-action="highlight-add"]').disabled, true);
+find(`[data-highlight-remove="${lastFilter}"]`).click();
+assert.equal(highlightRows().length, 9);
+assert.equal(find('[data-action="highlight-add"]').disabled, false);
+// Unsaved edits do not replace saved settings when the app restarts.
 const restoredDom = new JSDOM('<div id="app"></div>', {
   runScripts: "outside-only",
   url: "http://localhost",
@@ -604,32 +678,116 @@ restoredDom.window.HTMLElement.prototype.scrollTo = () => {};
 restoredDom.window.HTMLElement.prototype.scrollIntoView = () => {};
 restoredDom.window.__TAURI__ = window.__TAURI__;
 restoredDom.window.localStorage.setItem(
-  "kjv-reader:highlight-settings:v1",
+  "kjv-reader:highlight-settings:v2",
   JSON.stringify(savedHighlights),
 );
 restoredDom.window.eval(bundle.outputFiles[0].text);
-const restoreDeadline = Date.now() + 2000;
+const restoreDeadline = Date.now() + 3000;
 while (
   !restoredDom.window.document.querySelector(".reader-word-highlight") &&
   Date.now() < restoreDeadline
 )
   await pause(10);
 assert.ok(restoredDom.window.document.querySelector(".reader-word-highlight"));
+restoredDom.window.document.querySelector('[data-page="highlights"]').click();
 assert.equal(
-  restoredDom.window.document.querySelector("#highlight-count").value,
+  restoredDom.window.document.querySelectorAll("[data-highlight-id]").length,
+  5,
+);
+assert.equal(
+  restoredDom.window.document.querySelector(
+    `[data-highlight-id="${wordFilter}"] [data-highlight-field="count"]`,
+  ).value,
+  "63919",
+);
+restoredDom.window.close();
+// Existing v1 settings migrate, including disabled rules and custom colors/counts.
+const legacyDom = new JSDOM('<div id="app"></div>', {
+  runScripts: "outside-only",
+  url: "http://localhost",
+});
+legacyDom.window.HTMLElement.prototype.scrollTo = () => {};
+legacyDom.window.HTMLElement.prototype.scrollIntoView = () => {};
+legacyDom.window.__TAURI__ = window.__TAURI__;
+legacyDom.window.localStorage.setItem(
+  "kjv-reader:highlight-settings:v1",
+  JSON.stringify({
+    version: 1,
+    options: {
+      exclusive: { enabled: false, color: "#ffed00" },
+      firstMention: { enabled: true, color: "#ffccdd" },
+      occurrences: { enabled: true, color: "#abcdef", count: 63919 },
+    },
+  }),
+);
+legacyDom.window.eval(bundle.outputFiles[0].text);
+const legacyDeadline = Date.now() + 3000;
+while (
+  !legacyDom.window.document.querySelector(".reader-word-highlight") &&
+  Date.now() < legacyDeadline
+)
+  await pause(10);
+assert.ok(legacyDom.window.document.querySelector(".reader-word-highlight"));
+legacyDom.window.document.querySelector('[data-page="highlights"]').click();
+assert.equal(
+  legacyDom.window.document.querySelectorAll("[data-highlight-id]").length,
+  3,
+);
+assert.equal(
+  legacyDom.window.document.querySelector(
+    '[data-highlight-id="legacy-occurrences"] [data-highlight-field="count"]',
+  ).value,
   "63919",
 );
 assert.equal(
-  restoredDom.window.document.querySelector("#highlight-firstMention-color")
-    .value,
+  legacyDom.window.document.querySelector(
+    '[data-highlight-id="legacy-firstMention"] [data-highlight-field="color"]',
+  ).value,
   "#ffccdd",
 );
-restoredDom.window.close();
-// Leave later UI tests at their normal unhighlighted reader state.
-highlightChange("exclusive", false);
-highlightChange("firstMention", false);
-highlightChange("occurrences", false);
-find("#highlight-options-toggle").click();
+legacyDom.window.close();
+// Last mention flags mark the final token, even if a word repeats in its final verse.
+backToReader();
+change("#book", "Revelation");
+await pause(30);
+change("#chapter", "22");
+await pause(30);
+editHighlights();
+for (const row of highlightRows())
+  setHighlight(row.dataset.highlightId, "enabled", false);
+const finalFilter = addHighlight("lastMention");
+backToReader();
+assert.ok(
+  window.document.querySelectorAll('[data-highlight-rules~="lastMention"]')
+    .length > 0,
+);
+assert.deepEqual(
+  [
+    ...window.document.querySelectorAll(
+      '[data-highlight-rules~="lastMention"]',
+    ),
+  ].map((mark) => mark.textContent),
+  chapterHighlights("Revelation", 22).verses.flatMap((verse) =>
+    verse.words
+      .filter((word) => word.lastMention)
+      .map((word) =>
+        corpus
+          .find(
+            (v) =>
+              v.book === "Revelation" &&
+              v.chapter === 22 &&
+              v.number === verse.number,
+          )
+          .text.slice(word.start, word.end),
+      ),
+  ),
+);
+editHighlights();
+for (const row of highlightRows())
+  setHighlight(row.dataset.highlightId, "enabled", false);
+backToReader();
+change("#book", "Genesis");
+await pause(30);
 change("#chapter", "1");
 await pause(30);
 // Reader verses open prepared verse details; every word links to its Word page.
@@ -2024,6 +2182,30 @@ assert.deepEqual(
   ),
 );
 assert.ok(window.document.querySelector(".phrase-detail-page mark"));
+assert.deepEqual(
+  [...window.document.querySelectorAll(".phrase-books-table tbody tr")].map(
+    (row) => ({
+      book: row.children[0].textContent,
+      occurrences: Number(row.children[1].textContent.replaceAll(",", "")),
+    }),
+  ),
+  phraseDetail.bookEntries,
+);
+assert.equal(
+  phraseDetail.bookEntries.reduce((sum, row) => sum + row.occurrences, 0),
+  phraseDetail.occurrences,
+);
+assert.ok(
+  [...window.document.querySelectorAll(".phrase-detail-page dd")].every(
+    (cell) => cell.querySelector("[data-number]"),
+  ),
+);
+assert.ok(
+  window.document.querySelector(
+    ".phrase-detail-page .context-word-row [data-number]",
+  ),
+);
+
 find('.phrase-detail-page [data-page="phrases"]').click();
 await pause(30);
 assert.deepEqual(
@@ -2101,6 +2283,7 @@ find('nav [data-page="phrases"]').click();
 await pause(30);
 for (const field of ["words", "letters", "occurrences", "books"])
   find(`#phrase-${field}-filter`).value = "";
+find("#phrase-partial").checked = true;
 find("#phrase-search").value = "GOD,";
 submitPhrases();
 await pause(30);
@@ -2108,19 +2291,20 @@ const expectedSearch = (text, partial = false, offset = 0, counts = {}) =>
   phraseCatalogue.list(savedLengths, exclusiveSaved, offset, {
     text,
     partial,
+    exact: !partial,
     ...counts,
   });
-assert.ok(expectedSearch("GOD,").total > 50);
+assert.ok(expectedSearch("GOD,", true).total > 50);
 assert.deepEqual(
   displayedSavedPhrases(),
-  expectedSearch("GOD,").entries.map((e) => e.phrase),
+  expectedSearch("GOD,", true).entries.map((e) => e.phrase),
 );
 find('[data-action="saved-phrases-next"]').click();
 await pause(30);
 assert.equal(find("#phrase-search").value, "GOD,");
 assert.deepEqual(
   displayedSavedPhrases(),
-  expectedSearch("GOD,", false, 50).entries.map((e) => e.phrase),
+  expectedSearch("GOD,", true, 50).entries.map((e) => e.phrase),
 );
 find(".phrase-row").click();
 await pause(30);
@@ -2128,7 +2312,7 @@ find('[data-page="phrases"]').click();
 await pause(30);
 assert.deepEqual(
   displayedSavedPhrases(),
-  expectedSearch("GOD,", false, 50).entries.map((e) => e.phrase),
+  expectedSearch("GOD,", true, 50).entries.map((e) => e.phrase),
 );
 find("#phrase-search").value = "god";
 find("#phrase-partial").checked = true;
@@ -2157,7 +2341,7 @@ submitPhrases();
 await pause(30);
 assert.match(find(".phrases-page .notice").textContent, /No phrases match/);
 find("#phrase-search").value = "";
-find("#phrase-partial").checked = false;
+find('input[name="phrase-match"][value="exact"]').checked = true;
 find("#phrase-occurrences-filter").value = "";
 submitPhrases();
 await pause(30);
@@ -2177,6 +2361,15 @@ savedLengths.set(
     ["in the beginning god created", {}],
   ]),
 );
+find("#phrase-search").value = fullGenesisPhrase;
+submitPhrases();
+await pause(30);
+assert.deepEqual(displayedSavedPhrases(), [fullGenesisPhrase]);
+find("#phrase-search").value = hiddenGenesisPhrase;
+submitPhrases();
+await pause(30);
+assert.deepEqual(displayedSavedPhrases(), []);
+find("#phrase-partial").checked = true;
 find("#phrase-search").value = hiddenGenesisPhrase;
 submitPhrases();
 await pause(30);

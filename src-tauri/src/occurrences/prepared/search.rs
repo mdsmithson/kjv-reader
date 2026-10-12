@@ -49,9 +49,9 @@ pub(super) fn read_spans(root: &Path, manifest: &Manifest, tokens: &[u32]) -> io
     Ok(spans)
 }
 impl PreparedPhrases {
-    fn search_ids(&self, text: &str, partial: bool) -> io::Result<Arc<Vec<u32>>> {
+    pub(super) fn search_ids(&self, text: &str, partial: bool, exact: bool) -> io::Result<Arc<Vec<u32>>> {
         let query = crate::text::words(text);
-        let key = format!("{partial}:{}", query.join(" "));
+        let key = format!("{partial}:{exact}:{}", query.join(" "));
         if let Some((_, ids)) = self
             .search_cache
             .lock()
@@ -62,7 +62,15 @@ impl PreparedPhrases {
             return Ok(Arc::clone(ids));
         }
         let mut ids = Vec::new();
-        if !query.is_empty() && query.len() <= self.manifest.maximum_words as usize {
+        if exact && !query.is_empty() {
+            let tokens = query.iter().map(|term| self.dictionary.binary_search(term).ok().map(|id| id as u32)).collect::<Option<Vec<_>>>();
+            if let Some(tokens) = tokens {
+                if let Ok(rank) = self.visible.ids.binary_search_by(|&id| {
+                    let span = &self.search_spans[id as usize * 2..id as usize * 2 + 2];
+                    self.tokens[span[0] as usize..(span[0]+span[1]) as usize].cmp(&tokens)
+                }) { ids.push(self.visible.ids[rank]); }
+            }
+        } else if !query.is_empty() && query.len() <= self.manifest.maximum_words as usize {
             let accepted: Vec<Vec<bool>> = query
                 .iter()
                 .map(|term| {
@@ -93,7 +101,7 @@ impl PreparedPhrases {
                 let id=phrase_id as usize;
                 let span=&self.search_spans[id*2..id*2+2];
                 let (start, length) = (span[0] as usize, span[1] as usize);
-                if length >= query.len() && prefix[start + length - query.len() + 1] > prefix[start]
+                if (!exact || length == query.len()) && length >= query.len() && prefix[start + length - query.len() + 1] > prefix[start]
                 {
                     ids.push(id as u32);
                 }
@@ -117,7 +125,7 @@ impl PreparedPhrases {
         offset: usize,
         filters: &PhraseFilters,
     ) -> io::Result<SavedPhrasePage> {
-        let ids = self.search_ids(text, partial)?;
+        let ids = self.search_ids(text, partial, filters.exact)?;
         let restricted = filters.words.is_some()
             || filters.letters.is_some()
             || filters.occurrences.is_some()
@@ -195,16 +203,19 @@ mod tests {
         }
         let visible=super::super::visibility::oracle(&bible,4);
         let verify = |store: &PreparedPhrases| {
+            for exact in [false, true] {
             for (text, partial, count, length) in [
                 ("GOD,", false, None, None),
                 ("god", true, None, None),
                 ("alpha beta", false, None, None),
                 ("godhead alpha", false, Some(71), Some(2)),
+                ("God word1 godhead alpha", false, None, None),
                 ("od", false, None, None),
                 ("od", true, None, None),
                 ("!!!", false, None, None),
                 ("missing", false, None, None),
             ] {
+                if exact && partial { continue; }
                 let query = crate::text::words(text);
                 let expected: Vec<_> = oracle
                     .iter()
@@ -213,6 +224,7 @@ mod tests {
                         visible.contains(*phrase) && count.is_none_or(|count| *n == count)
                             && length.is_none_or(|length| *l == length)
                             && !query.is_empty()
+                            && (!exact || tokens == query)
                             && tokens.windows(query.len()).any(|window| {
                                 window.iter().zip(&query).all(|(word, term)| {
                                     if partial {
@@ -228,6 +240,7 @@ mod tests {
                 let filters = PhraseFilters {
                     text: Some(text.into()),
                     partial,
+                    exact,
                     occurrences: count.map(|n| n as u32),
                     words: length.map(|n| n as u16),
                     ..Default::default()
@@ -248,6 +261,7 @@ mod tests {
                             .collect::<Vec<_>>()
                     );
                 }
+            }
             }
         };
         verify(&PreparedPhrases::open(&saved, &bible).unwrap());

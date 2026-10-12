@@ -6,10 +6,34 @@ import {
   type State,
   type Verse,
 } from "./model";
-export const highlightStorageKey = "kjv-reader:highlight-settings:v1";
+export const highlightStorageKey = "kjv-reader:highlight-settings:v2";
+export const legacyHighlightStorageKey = "kjv-reader:highlight-settings:v1";
+export const highlightKinds = [
+  ["wordCount", "Words that show X times"],
+  ["phraseCount", "Phrases that show X times"],
+  ["lastMention", "Words that show for the last time"],
+  ["firstMention", "First mention of words"],
+  ["exclusive", "Exclusive words for chapter"],
+] as const;
+const palette = [
+  "#f6d887",
+  "#bad6f6",
+  "#f6b8c1",
+  "#b8dec1",
+  "#d4c2f0",
+  "#a8e4df",
+  "#f8bd88",
+  "#d2df93",
+  "#f1bde1",
+  "#c4d0ff",
+];
 const color = (value: unknown, fallback: string) =>
   typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)
     ? value.toLowerCase()
+    : fallback;
+const count = (value: unknown, fallback = 1) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
     : fallback;
 export const parseReaderHighlights = (
   value: unknown,
@@ -17,44 +41,69 @@ export const parseReaderHighlights = (
   if (!value || typeof value !== "object") return defaultReaderHighlights;
   const saved = value as Record<string, unknown>;
   if (
-    saved.version !== 1 ||
-    !saved.options ||
-    typeof saved.options !== "object"
-  )
+    saved.version === 1 &&
+    saved.options &&
+    typeof saved.options === "object"
+  ) {
+    const options = saved.options as Record<string, unknown>;
+    return (
+      [
+        ["exclusive", "exclusive", "#f6d887"],
+        ["firstMention", "firstMention", "#b8dec1"],
+        ["occurrences", "wordCount", "#bad6f6"],
+      ] as const
+    ).map(([key, kind, fallback]) => {
+      const raw =
+        options[key] && typeof options[key] === "object"
+          ? (options[key] as Record<string, unknown>)
+          : {};
+      return {
+        id: `legacy-${key}`,
+        kind,
+        enabled: raw.enabled === true,
+        color: color(raw.color, fallback),
+        count: count(raw.count, key === "occurrences" ? 7 : 1),
+      };
+    });
+  }
+  if (saved.version !== 2 || !Array.isArray(saved.filters))
     return defaultReaderHighlights;
-  const options = saved.options as Record<string, unknown>;
-  const rule = (key: "exclusive" | "firstMention" | "occurrences") => {
-    const raw =
-      options[key] && typeof options[key] === "object"
-        ? (options[key] as Record<string, unknown>)
-        : {};
-    return {
-      enabled: raw.enabled === true,
-      color: color(raw.color, defaultReaderHighlights[key].color),
-    };
-  };
-  const frequency =
-    options.occurrences && typeof options.occurrences === "object"
-      ? (options.occurrences as Record<string, unknown>)
-      : {};
-  return {
-    exclusive: rule("exclusive"),
-    firstMention: rule("firstMention"),
-    occurrences: {
-      ...rule("occurrences"),
-      count:
-        typeof frequency.count === "number" &&
-        Number.isSafeInteger(frequency.count) &&
-        frequency.count > 0
-          ? frequency.count
-          : 7,
-    },
-  };
+  const ids = new Set<string>();
+  return saved.filters
+    .filter(
+      (raw) =>
+        raw &&
+        typeof raw === "object" &&
+        highlightKinds.some(([kind]) => kind === raw.kind),
+    )
+    .slice(0, 10)
+    .map((raw, i) => {
+      let id =
+        typeof raw.id === "string" &&
+        /^[a-z0-9_-]{1,64}$/i.test(raw.id) &&
+        !ids.has(raw.id)
+          ? raw.id
+          : `filter-${i + 1}`;
+      while (ids.has(id)) id = `${id}-next`;
+      ids.add(id);
+      return {
+        id,
+        kind: raw.kind,
+        enabled: raw.enabled === true,
+        color: color(raw.color, palette[i]),
+        count: count(raw.count),
+      };
+    });
 };
 export const readReaderHighlights = (): ReaderHighlightOptions => {
   try {
+    const current = window.localStorage.getItem(highlightStorageKey);
     return parseReaderHighlights(
-      JSON.parse(window.localStorage.getItem(highlightStorageKey) ?? "null"),
+      JSON.parse(
+        current ??
+          window.localStorage.getItem(legacyHighlightStorageKey) ??
+          "null",
+      ),
     );
   } catch {
     return defaultReaderHighlights;
@@ -66,12 +115,27 @@ export const saveReaderHighlights = (
   try {
     window.localStorage.setItem(
       highlightStorageKey,
-      JSON.stringify({ version: 1, options }),
+      JSON.stringify({ version: 2, filters: options }),
     );
     return true;
   } catch {
     return false;
   }
+};
+export const newHighlightFilter = (
+  options: ReaderHighlightOptions,
+): import("./model").ReaderHighlightRule => {
+  let n = 1;
+  while (options.some((rule) => rule.id === `filter-${n}`)) n++;
+  return {
+    id: `filter-${n}`,
+    kind: "wordCount",
+    enabled: true,
+    count: 1,
+    color:
+      palette.find((value) => !options.some((rule) => rule.color === value)) ??
+      palette[options.length % palette.length],
+  };
 };
 export const highlightStatus = (status: State["highlightSaveStatus"]) =>
   status === "saved"
@@ -84,7 +148,7 @@ export const highlightStatus = (status: State["highlightSaveStatus"]) =>
 const background = (colors: string[]) =>
   colors.length === 1
     ? colors[0]
-    : `linear-gradient(to bottom,${colors.flatMap((value, index) => [`${value} ${(index * 100) / colors.length}%`, `${value} ${((index + 1) * 100) / colors.length}%`]).join(",")})`;
+    : `linear-gradient(to right,${colors.flatMap((value, index) => [`${value} ${(index * 100) / colors.length}%`, `${value} ${((index + 1) * 100) / colors.length}%`]).join(",")})`;
 const foreground = (colors: string[]) => {
   const brightness = colors.map(
     (value) =>
@@ -103,6 +167,7 @@ export const readerWordHighlights = (
   text: string,
   words: readonly ReaderHighlightWord[],
   options: ReaderHighlightOptions,
+  phrases: readonly import("./model").ReaderHighlightPhrase[] = [],
 ): string => {
   let cursor = 0;
   let html = "";
@@ -110,23 +175,37 @@ export const readerWordHighlights = (
     const colors: string[] = [];
     const rules: string[] = [];
     const labels: string[] = [];
-    if (options.exclusive.enabled && word.exclusive) {
-      colors.push(options.exclusive.color);
-      rules.push("exclusive");
-      labels.push("Exclusive to this chapter");
-    }
-    if (options.firstMention.enabled && word.firstMention) {
-      colors.push(options.firstMention.color);
-      rules.push("firstMention");
-      labels.push("First mention in the Bible");
-    }
-    if (
-      options.occurrences.enabled &&
-      word.count === options.occurrences.count
-    ) {
-      colors.push(options.occurrences.color);
-      rules.push("occurrences");
-      labels.push(`${word.count.toLocaleString()} appearances in the Bible`);
+    for (const rule of options) {
+      if (!rule.enabled) continue;
+      const matches =
+        rule.kind === "exclusive"
+          ? word.exclusive
+          : rule.kind === "firstMention"
+            ? word.firstMention
+            : rule.kind === "lastMention"
+              ? word.lastMention
+              : rule.kind === "wordCount"
+                ? word.count === rule.count
+                : phrases.some(
+                    (phrase) =>
+                      phrase.count === rule.count &&
+                      word.start >= phrase.start &&
+                      word.end <= phrase.end,
+                  );
+      if (!matches) continue;
+      colors.push(rule.color);
+      rules.push(rule.kind);
+      labels.push(
+        rule.kind === "wordCount"
+          ? `${rule.count.toLocaleString()} word appearances in the Bible`
+          : rule.kind === "phraseCount"
+            ? `In a phrase occurring ${rule.count.toLocaleString()} times in the Bible`
+            : rule.kind === "exclusive"
+              ? "Exclusive to this chapter"
+              : rule.kind === "firstMention"
+                ? "First mention in the Bible"
+                : "Last mention in the Bible",
+      );
     }
     html += escape(text.slice(cursor, word.start));
     const original = escape(text.slice(word.start, word.end));
@@ -139,27 +218,29 @@ export const readerWordHighlights = (
 };
 export const readerVerseMarkup = (state: State, verse: Verse) => {
   const data = state.readerHighlightData;
-  const words =
+  const metadata =
     data?.book === verse.book && data.chapter === verse.chapter
-      ? data.verses.find((entry) => entry.number === verse.number)?.words
+      ? data.verses.find((entry) => entry.number === verse.number)
       : undefined;
-  const text = words
-    ? readerWordHighlights(verse.text, words, state.readerHighlightOptions)
+  const text = metadata
+    ? readerWordHighlights(
+        verse.text,
+        metadata.words,
+        state.readerHighlightOptions,
+        metadata.phrases,
+      )
     : escape(verse.text);
   return `<button class="verse reader-verse${state.location.verse === verse.number ? " selected-verse" : ""}" id="verse-${verse.number}" data-verse-detail="true" data-book="${escape(verse.book)}" data-chapter="${verse.chapter}" data-verse="${verse.number}" aria-label="Explore ${escape(verse.book)} ${verse.chapter}:${verse.number}"><span class="verse-number">${verse.number}</span>${text}</button>`;
 };
 export const readerChapterMarkup = (state: State) =>
   state.verses.map((verse) => readerVerseMarkup(state, verse)).join("");
-export const highlightOptionsView = (state: State) => {
-  const options = state.readerHighlightOptions;
-  const colors = (id: string, label: string, value: string) =>
-    `<label class="highlight-color">Color<input type="color" id="highlight-${id}-color" name="${id}Color" aria-label="${label}" value="${value}"></label>`;
-  return `<section class="reader-highlight-options"><button id="highlight-options-toggle" data-action="highlight-options-toggle" aria-expanded="${state.highlightPanelOpen}" aria-controls="reader-highlight-panel">Highlight options <span aria-hidden="true">${state.highlightPanelOpen ? "⌃" : "⌄"}</span></button>
-  <div id="reader-highlight-panel" class="highlight-drawer${state.highlightPanelOpen ? " is-open" : ""}" aria-hidden="${!state.highlightPanelOpen}"${state.highlightPanelOpen ? "" : " inert"}><div class="highlight-drawer-inner"><form id="reader-highlights-form"><h2>Highlight:</h2>
-  <div class="highlight-rule"><div><label class="checkbox"><input type="checkbox" name="exclusive"${options.exclusive.enabled ? " checked" : ""}> Exclusive words for chapter</label><p>Highlights words found only in the chapter you are reading. This follows each chapter you open.</p></div>${colors("exclusive", "Highlight color for chapter-exclusive words", options.exclusive.color)}</div>
-  <div class="highlight-rule"><div><label class="checkbox"><input type="checkbox" name="firstMention"${options.firstMention.enabled ? " checked" : ""}> First mention</label><p>Highlights each word’s first appearance in the Bible.</p></div>${colors("firstMention", "Highlight color for first mentions", options.firstMention.color)}</div>
-  <div class="highlight-rule"><div><label class="checkbox"><input type="checkbox" name="occurrences"${options.occurrences.enabled ? " checked" : ""}> Words that show X times</label><label class="highlight-frequency">Exactly this many times in the Bible<input id="highlight-count" name="count" type="number" min="1" step="1" max="9007199254740991" value="${options.occurrences.count}"${options.occurrences.enabled ? "" : " disabled"} required></label></div>${colors("occurrences", "Highlight color for occurrence counts", options.occurrences.color)}</div>
-  <p class="counting-note">Matches whole words, ignoring case. Original spelling and punctuation stay visible. A word matching several rules shows their colors as stripes.</p>
-  <button type="submit" class="primary">Save highlight options</button><p id="highlight-save-status" role="${state.highlightSaveStatus === "error" ? "alert" : "status"}">${highlightStatus(state.highlightSaveStatus)}</p>
-  </form></div></div></section>`;
+export const highlightOptionsView = (state: State) =>
+  `<div class="reader-highlight-options"><button data-page="highlights">Edit Highlights</button><span>${state.readerHighlightOptions.filter((rule) => rule.enabled).length} active filters</span></div>`;
+export const highlightsView = (state: State) => {
+  const rules = state.readerHighlightOptions;
+  return `<section class="search-page highlights-page"><button data-page="reader">← Back to Read the Bible</button><div class="eyebrow">PERSONALIZE YOUR READING</div><h1>Highlights</h1><p class="intro">Add up to 10 highlight filters, each with its own color. They apply to every chapter.</p>
+  <form id="reader-highlights-form"><div class="highlight-page-actions"><button type="button" data-action="highlight-add"${rules.length >= 10 ? " disabled" : ""}>Add highlight</button><span>${rules.length} of 10 filters</span></div>
+  ${rules.length ? `<div class="highlight-filter-list">${rules.map((rule, i) => `<div class="highlight-filter" data-highlight-id="${rule.id}"><div class="highlight-filter-heading"><strong>Filter ${i + 1}</strong><label class="checkbox"><input type="checkbox" data-highlight-field="enabled"${rule.enabled ? " checked" : ""}>Enabled</label><button type="button" data-highlight-remove="${rule.id}" aria-label="Remove highlight filter ${i + 1}">Remove</button></div><div class="highlight-filter-controls"><label>Highlight<select data-highlight-field="kind">${highlightKinds.map(([kind, label]) => `<option value="${kind}"${kind === rule.kind ? " selected" : ""}>${label}</option>`).join("")}</select></label><label class="highlight-frequency"${rule.kind === "wordCount" || rule.kind === "phraseCount" ? "" : " hidden"}>Bible-wide occurrences (X)<input data-highlight-field="count" type="number" min="1" max="${Number.MAX_SAFE_INTEGER}" step="1" required value="${rule.count}"${rule.kind === "wordCount" || rule.kind === "phraseCount" ? "" : " disabled"}></label><label class="highlight-color">Color<input type="color" data-highlight-field="color" aria-label="Color for highlight filter ${i + 1}" value="${rule.color}"></label></div></div>`).join("")}</div>` : '<p class="notice">No highlight filters yet. Choose Add highlight to get started.</p>'}
+  <p class="counting-note">Occurrence counts cover the whole Bible and ignore case. First and last mention highlight the first or final appearance of each word. Chapter-exclusive words follow the chapter you are reading. Phrase highlights use the longest phrases retained in the Phrases section. Overlapping filters appear as vertical color segments on each word.</p>
+  <button type="submit" class="primary">Save Highlights</button><p id="highlight-save-status" role="${state.highlightSaveStatus === "error" ? "alert" : "status"}">${highlightStatus(state.highlightSaveStatus)}</p></form></section>`;
 };

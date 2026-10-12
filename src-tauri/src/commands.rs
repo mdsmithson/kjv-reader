@@ -67,10 +67,11 @@ pub async fn saved_phrases(offset: usize, filters: Option<crate::occurrences::ca
     tauri::async_runtime::spawn_blocking(move || phrases.page(offset, &filters.unwrap_or_default())).await.map_err(|error| error.to_string())?
 }
 #[derive(serde::Serialize)]
-pub struct PhrasePage { #[serde(flatten)] details:crate::phrase_stats::PhraseDetail, #[serde(flatten)] contents:crate::occurrences::prepared::PhraseContents }
+#[serde(rename_all = "camelCase")]
+pub struct PhrasePage { book_entries: Vec<crate::occurrences::prepared::BookOccurrence>, #[serde(flatten)] details:crate::phrase_stats::PhraseDetail, #[serde(flatten)] contents:crate::occurrences::prepared::PhraseContents }
 #[tauri::command]
 pub fn phrase_details(phrase:String,offset:usize,bible:tauri::State<'_,Bible>,phrases:tauri::State<'_,Arc<crate::occurrences::prepared::PreparedPhrases>>,statistics:tauri::State<'_,crate::word_stats::WordStatistics>)->Result<PhrasePage,String> {
-    Ok(PhrasePage {details:phrases.detail(&bible,&phrase,offset)?,contents:phrases.contents(&phrase,&statistics)?})
+    Ok(PhrasePage {book_entries:phrases.book_counts(&phrase)?,details:phrases.detail(&bible,&phrase,offset)?,contents:phrases.contents(&phrase,&statistics)?})
 }
 
 #[tauri::command]

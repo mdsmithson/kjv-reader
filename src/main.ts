@@ -21,6 +21,7 @@ import {
   saveReaderHighlights,
   highlightStatus,
   readerChapterMarkup,
+  newHighlightFilter,
 } from "./reader-highlights";
 import { syncOptionalControls } from "./filter-controls";
 
@@ -31,6 +32,7 @@ let state: State = {
 };
 let request = 0;
 let countRequest = 0;
+let readerHighlightReturnScroll = 0;
 
 const dispatch = (action: Action, preservePosition = false) => {
   const main = root.querySelector<HTMLElement>("main");
@@ -93,9 +95,15 @@ const readPhraseFilters = (): PhraseFilters => ({
     state.phraseFilters.text ??
     "",
   partial:
-    root.querySelector<HTMLInputElement>("#phrase-partial")?.checked ??
+    root.querySelector<HTMLInputElement>(
+      'input[name="phrase-match"][value="partial"]',
+    )?.checked ??
     state.phraseFilters.partial ??
     false,
+  exact:
+    root.querySelector<HTMLInputElement>(
+      'input[name="phrase-match"][value="exact"]',
+    )?.checked ?? true,
   ...Object.fromEntries(
     (["words", "letters", "occurrences", "books"] as const).map((field) => {
       const input = root.querySelector<HTMLInputElement>(
@@ -120,47 +128,45 @@ const refreshHighlightStatus = () => {
     );
   }
 };
-const updateReaderHighlights = () => {
-  const form = root.querySelector<HTMLFormElement>("#reader-highlights-form");
-  if (!form) return;
-  const data = new FormData(form);
-  const old = state.readerHighlightOptions;
-  const rule = (key: "exclusive" | "firstMention" | "occurrences") => ({
-    enabled: data.has(key),
-    color: String(data.get(`${key}Color`) ?? old[key].color),
+const updateReaderHighlights = (
+  target?: HTMLInputElement | HTMLSelectElement,
+) => {
+  const rows = [...root.querySelectorAll<HTMLElement>("[data-highlight-id]")];
+  const options = state.readerHighlightOptions.map((old) => {
+    const row = rows.find((row) => row.dataset.highlightId === old.id);
+    if (!row) return old;
+    const value = row.querySelector<HTMLInputElement>(
+      '[data-highlight-field="count"]',
+    )?.valueAsNumber;
+    return {
+      ...old,
+      enabled:
+        row.querySelector<HTMLInputElement>('[data-highlight-field="enabled"]')
+          ?.checked ?? old.enabled,
+      kind: (row.querySelector<HTMLSelectElement>(
+        '[data-highlight-field="kind"]',
+      )?.value ?? old.kind) as typeof old.kind,
+      color:
+        row.querySelector<HTMLInputElement>('[data-highlight-field="color"]')
+          ?.value ?? old.color,
+      count:
+        value && Number.isSafeInteger(value) && value > 0 ? value : old.count,
+    };
   });
-  const rawCount =
-    root.querySelector<HTMLInputElement>("#highlight-count")?.valueAsNumber;
-  const count =
-    rawCount && Number.isSafeInteger(rawCount) && rawCount > 0
-      ? rawCount
-      : old.occurrences.count;
-  state = reduce(state, {
-    type: "reader-highlight-options",
-    options: {
-      exclusive: rule("exclusive"),
-      firstMention: rule("firstMention"),
-      occurrences: { ...rule("occurrences"), count },
-    },
-  });
-  const countInput = root.querySelector<HTMLInputElement>("#highlight-count");
-  if (countInput)
-    countInput.disabled = !state.readerHighlightOptions.occurrences.enabled;
+  // Preserve active entry controls while previewing numeric and color changes.
+  if (target?.dataset.highlightField === "kind") {
+    const id = target.closest<HTMLElement>("[data-highlight-id]")?.dataset
+      .highlightId;
+    dispatch({ type: "reader-highlight-options", options }, true);
+    root
+      .querySelector<HTMLSelectElement>(
+        `[data-highlight-id="${id}"] [data-highlight-field="kind"]`,
+      )
+      ?.focus({ preventScroll: true });
+  } else state = reduce(state, { type: "reader-highlight-options", options });
   const chapter = root.querySelector(".chapter-text");
   if (chapter) chapter.innerHTML = readerChapterMarkup(state);
   refreshHighlightStatus();
-};
-const toggleHighlightOptions = () => {
-  const open = !state.highlightPanelOpen;
-  state = reduce(state, { type: "reader-highlight-panel", open });
-  const panel = root.querySelector("#reader-highlight-panel");
-  panel?.classList.toggle("is-open", open);
-  panel?.setAttribute("aria-hidden", String(!open));
-  panel?.toggleAttribute("inert", !open);
-  const toggle = root.querySelector("#highlight-options-toggle");
-  toggle?.setAttribute("aria-expanded", String(open));
-  const arrow = toggle?.querySelector("span");
-  if (arrow) arrow.textContent = open ? "⌃" : "⌄";
 };
 const readVerseFilters = (): VerseFilters =>
   Object.fromEntries(
@@ -464,15 +470,55 @@ root.addEventListener("click", (event) => {
     "button",
   );
   if (!button || button.disabled) return;
-  if (button.dataset.action === "highlight-options-toggle") {
-    toggleHighlightOptions();
+  if (button.dataset.action === "highlight-add") {
+    if (state.readerHighlightOptions.length >= 10) return;
+    updateReaderHighlights();
+    dispatch(
+      {
+        type: "reader-highlight-options",
+        options: [
+          ...state.readerHighlightOptions,
+          newHighlightFilter(state.readerHighlightOptions),
+        ],
+      },
+      true,
+    );
+    root
+      .querySelectorAll<HTMLSelectElement>('[data-highlight-field="kind"]')
+      .item(state.readerHighlightOptions.length - 1)
+      ?.focus();
+    return;
+  }
+  if (button.dataset.highlightRemove) {
+    updateReaderHighlights();
+    dispatch(
+      {
+        type: "reader-highlight-options",
+        options: state.readerHighlightOptions.filter(
+          (rule) => rule.id !== button.dataset.highlightRemove,
+        ),
+      },
+      true,
+    );
     return;
   }
   if (button.dataset.page) {
+    const previousPage = state.page;
+    if (button.dataset.page === "highlights" && previousPage === "reader")
+      readerHighlightReturnScroll = root.querySelector("main")?.scrollTop ?? 0;
     dispatch({
       type: "page",
       page: button.dataset.page as State["page"],
     });
+    if (state.page === "reader" && state.verses.length === 0)
+      void navigate(state.location);
+    if (state.page === "highlights" || state.page === "reader")
+      root.querySelector("main")?.scrollTo({
+        top:
+          state.page === "reader" && previousPage === "highlights"
+            ? readerHighlightReturnScroll
+            : 0,
+      });
     if (state.page === "numbers") void numberList();
     if (state.page === "verses") void verseList();
     if (state.page === "phrases") void savedPhrases();
@@ -894,13 +940,13 @@ root.addEventListener("input", (event) => {
     input.closest("#reader-highlights-form") &&
     (input.type === "number" || input.type === "color")
   )
-    updateReaderHighlights();
+    updateReaderHighlights(input);
 });
 
 root.addEventListener("change", (event) => {
   const control = event.target as HTMLSelectElement;
   if (control.closest("#reader-highlights-form")) {
-    updateReaderHighlights();
+    updateReaderHighlights(control);
     return;
   }
   if (control.id === "verses-book") {

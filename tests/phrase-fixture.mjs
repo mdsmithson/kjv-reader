@@ -37,6 +37,23 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
           ).length,
         0,
       ),
+      bookEntries: [...new Set(matches.map((line) => line.book))].map(
+        (book) => ({
+          book,
+          occurrences: matches
+            .filter((line) => line.book === book)
+            .reduce(
+              (sum, line) =>
+                sum +
+                line.tokens.filter(
+                  (_, i) =>
+                    line.tokens.slice(i, i + tokens.length).join(" ") ===
+                    phrase,
+                ).length,
+              0,
+            ),
+        }),
+      ),
       results: {
         total: matches.length,
         verses: matches
@@ -91,13 +108,14 @@ export const phraseFixture = (verses, tokenize, wordCatalogue) => {
       .filter((entry) => !isHidden(entry.phrase, entry.occurrences))
       .filter((entry) =>
         Object.entries(filters).every(([field, value]) => {
-          if (field === "partial") return true;
+          if (field === "partial" || field === "exact") return true;
           if (field === "text") {
             if (!value?.trim()) return true;
             const query = tokenize(value);
             const tokens = tokenize(entry.phrase);
             return (
               query.length > 0 &&
+              (!filters.exact || entry.phrase === query.join(" ")) &&
               tokens.some(
                 (_, start) =>
                   start + query.length <= tokens.length &&

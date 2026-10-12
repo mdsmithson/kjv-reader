@@ -1,7 +1,11 @@
 import { numberFixture } from "./number-fixture.mjs";
-import { readerHighlightFixture } from "./reader-highlight-fixture.mjs";
+import {
+  readerHighlightFixture,
+  preparedHighlightSpans,
+} from "./reader-highlight-fixture.mjs";
 // Development-only visual fixture. Not included in the production entry point.
 import source from "../src-tauri/data/kjv.json";
+import savedVerses from "../src-tauri/data/precomputed/verses.json";
 import savedPhraseFrequencies from "../src-tauri/data/precomputed/verse-phrase-frequency.json";
 import type { Query, OccurrenceQuery } from "../src/model";
 import { exclusiveFixture } from "./exclusive-fixture.mjs";
@@ -70,10 +74,26 @@ saved.set(
 );
 const letterCount = (text: string) =>
   (text.match(/\p{Alphabetic}/gu) ?? []).length;
+const [displayBytes, phraseCountBytes] = await Promise.all([
+  fetch(
+    new URL("../src-tauri/data/precomputed/verse-display.bin", import.meta.url),
+  ).then((response) => response.arrayBuffer()),
+  fetch(
+    new URL(
+      "../src-tauri/data/precomputed/reader-phrase-counts.bin",
+      import.meta.url,
+    ),
+  ).then((response) => response.arrayBuffer()),
+]);
 const chapterHighlights = readerHighlightFixture(
   verses,
   wordCatalogue,
   chapterWordOwners,
+  preparedHighlightSpans(
+    savedVerses.entries,
+    new DataView(displayBytes),
+    new DataView(phraseCountBytes),
+  ),
 );
 window.__TAURI__ = {
   core: {

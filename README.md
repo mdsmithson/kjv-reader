@@ -456,37 +456,21 @@ Word metadata comes from the saved Words catalogue, and the small word and
 subphrase lists sort locally. These indexes add approximately 91 MB and are
 prepared once, verified before packaging, and reused unchanged on later builds.
 
-## Reader highlight options
+## Reader highlights
 
-**Read the Bible** has a visible **Highlight options** button above the chapter.
-It opens and closes a sliding drawer with three independent rules and a color
-picker for each:
+Use **Edit Highlights** above a chapter to open the dedicated Highlights page.
+Add up to ten filters, choose a color for each, enable or disable them, and save.
+Filters include chapter-exclusive words, first/final word mentions, words appearing
+exactly X times, and retained phrases occurring exactly X times across the Bible.
+Overlapping filters render as vertical color segments. Existing preferences migrate
+automatically. Returning to the reader preserves the chapter and reading position.
 
-- **Exclusive words for chapter** highlights words found nowhere outside the
-  current chapter. The saved rule follows each chapter you open, using that
-  chapter's own exclusive words.
-- **First mention** highlights the first occurrence of each normalized word in
-  the Bible, including only the first appearance when it repeats in its first
-  verse.
-- **Words that show X times** highlights every whole word with exactly the
-  selected number of total appearances in the Bible.
+First/final word flags and retained phrase counts are prepared once in reader
+metadata files. Chapter requests use saved word/phrase boundaries and statistics;
+filter edits do not scan or recount the Bible. Unsaved edits stay active for the
+current session; Save Highlights remembers them across app restarts.
 
-Edits preview immediately. **Save highlight options** stores the enabled rules,
-colors, and count in the app's local preferences, restores them after reopening,
-and applies them across chapters and books. Closing the drawer does not disable
-the rules. Words matching multiple rules show each color in horizontal stripes.
-Original capitalization, punctuation, and verse links are preserved. Dark colors
-use light lettering; mixed dark/light stripes add a text outline for legibility.
-The drawer respects reduced-motion preferences, and closed controls leave the
-keyboard tab order.
-
-Highlight eligibility reads existing prepared word boundaries, chapter-exclusive
-statistics, first-mention locations, and global word counts. Navigation requests
-chapter text and highlighting metadata together, with the existing stale-request
-protection. No whole-Bible scan, frequency recount, or new phrase index is needed.
-Saved preferences are validated before use; invalid colors and counts fall back
-to safe defaults. A failed preference write is reported in the drawer while the
-current session's highlights remain active.
+## Verse count filters
 
 On **Verses**, click the **Words**, **Letters**, or **Phrases** header to reveal
 an exact-count filter, then press Enter or **Filter verses**. Count filters
@@ -509,3 +493,7 @@ Add filter on Verses also offers phrase frequency columns. X is the whole-Bible 
 The persisted phrase catalogue omits a shorter phrase whenever a containing phrase has the same Bible-wide occurrence count. This applies to every count, including repeated phrases. The catalogue includes all verse-bounded phrase lengths, so rollups reach the true longest phrase instead of stopping at 32 words. Saved rollup indexes apply before searching, filtering, and pagination. Verse phrase totals and phrase-frequency columns use the same retained dataset, so counts agree with the displayed verse phrase list.
 
 Run `npm run prepare:data` before the UI integration tests or visual preview; they also verify the prepared verse and phrase-frequency totals. Existing complete indexes are reused.
+
+Reader highlighting is edited on a separate Highlights page using Edit Highlights above each chapter. Add up to ten saved filters with independent colors and enabled states: word occurrence count, phrase occurrence count, first mention, last mention, and chapter-exclusive words. Word and phrase counts cover the whole Bible. First and last mention mark only the first or final token; phrase filters use the retained equal-count-rollup catalogue. When filters overlap on a word, their colors form vertical segments from left to right. Existing highlight preferences migrate to the new format. Reader mention flags and phrase occurrence counts are prepared once, then retrieved directly for each chapter.
+
+Phrase search offers Exact Match (the complete phrase, ignoring case and punctuation) and Partial Match (consecutive text anywhere in the phrase, including word fragments). Phrase profiles link their counts to Numbers and display a saved per-book occurrence breakdown, including repeated appearances within a verse. Book counts are generated once during data preparation and reused on subsequent builds and app launches.

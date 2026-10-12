@@ -12,12 +12,16 @@ export type VerseFilters = Readonly<{
   letters: number | null;
   phrases: number | null;
 }>;
-export type ReaderHighlightRule = Readonly<{ enabled: boolean; color: string }>;
-export type ReaderHighlightOptions = Readonly<{
-  exclusive: ReaderHighlightRule;
-  firstMention: ReaderHighlightRule;
-  occurrences: ReaderHighlightRule & Readonly<{ count: number }>;
+export type ReaderHighlightKind =
+  "exclusive" | "firstMention" | "lastMention" | "wordCount" | "phraseCount";
+export type ReaderHighlightRule = Readonly<{
+  id: string;
+  kind: ReaderHighlightKind;
+  enabled: boolean;
+  color: string;
+  count: number;
 }>;
+export type ReaderHighlightOptions = readonly ReaderHighlightRule[];
 export type ReaderHighlightWord = Readonly<{
   start: number;
   end: number;
@@ -25,6 +29,12 @@ export type ReaderHighlightWord = Readonly<{
   count: number;
   exclusive: boolean;
   firstMention: boolean;
+  lastMention: boolean;
+}>;
+export type ReaderHighlightPhrase = Readonly<{
+  start: number;
+  end: number;
+  count: number;
 }>;
 export type ReaderChapterHighlights = Readonly<{
   book: string;
@@ -32,13 +42,10 @@ export type ReaderChapterHighlights = Readonly<{
   verses: readonly Readonly<{
     number: number;
     words: readonly ReaderHighlightWord[];
+    phrases: readonly ReaderHighlightPhrase[];
   }>[];
 }>;
-export const defaultReaderHighlights: ReaderHighlightOptions = {
-  exclusive: { enabled: false, color: "#f6d887" },
-  firstMention: { enabled: false, color: "#b8dec1" },
-  occurrences: { enabled: false, color: "#bad6f6", count: 7 },
-};
+export const defaultReaderHighlights: ReaderHighlightOptions = [];
 export type DetailSort = Readonly<{
   field: "phrase" | "word" | "occurrences" | "letters" | "books";
   direction: "asc" | "desc";
@@ -83,6 +90,7 @@ export type SavedPhrase = Readonly<{
 export type PhraseFilters = Readonly<{
   text?: string;
   partial?: boolean;
+  exact?: boolean;
   words: number | null;
   letters: number | null;
   occurrences: number | null;
@@ -90,7 +98,7 @@ export type PhraseFilters = Readonly<{
 }>;
 export type PhraseFilterField = Exclude<
   keyof PhraseFilters,
-  "text" | "partial"
+  "text" | "partial" | "exact"
 >;
 export type SavedPhrasePage = Readonly<{
   total: number;
@@ -103,6 +111,7 @@ export type PhraseDetail = SavedPhrase &
     wordParts: VerseDetail["wordParts"];
     wordEntries: readonly ContextWord[];
     subphraseResults: SavedPhrasePage;
+    bookEntries: readonly { book: string; occurrences: number }[];
   }>;
 export type WordSummary = Readonly<{
   word: string;
@@ -198,7 +207,6 @@ export type OccurrencePage = Readonly<{
 export type State = Readonly<{
   readerHighlightOptions: ReaderHighlightOptions;
   readerHighlightData: ReaderChapterHighlights | null;
-  highlightPanelOpen: boolean;
   highlightSaveStatus: "" | "unsaved" | "saved" | "error";
   versePhraseSort: DetailSort;
   verseWordSort: DetailSort;
@@ -226,6 +234,7 @@ export type State = Readonly<{
     | "phrase-detail"
     | "words"
     | "word-detail"
+    | "highlights"
     | "reader"
     | "search"
     | "occurrences"
@@ -314,7 +323,6 @@ export type Action =
   | { type: "number-verses"; results: VersePage }
   | { type: "number-words"; results: WordPage }
   | { type: "reader-highlight-options"; options: ReaderHighlightOptions }
-  | { type: "reader-highlight-panel"; open: boolean }
   | { type: "reader-highlight-saved"; status: "saved" | "error" }
   | { type: "verse-sort"; sort: DetailSort }
   | { type: "verse-word-sort"; sort: DetailSort }
@@ -388,7 +396,6 @@ export const initialState: State = {
   page: "reader",
   readerHighlightOptions: defaultReaderHighlights,
   readerHighlightData: null,
-  highlightPanelOpen: false,
   highlightSaveStatus: "",
   versePhraseSort: { field: "phrase", direction: "asc" },
   verseWordSort: { field: "word", direction: "asc" },
@@ -465,8 +472,6 @@ export const reduce = (state: State, action: Action): State => {
         readerHighlightOptions: action.options,
         highlightSaveStatus: "unsaved",
       };
-    case "reader-highlight-panel":
-      return { ...state, highlightPanelOpen: action.open };
     case "reader-highlight-saved":
       return { ...state, highlightSaveStatus: action.status };
     case "verse-sort":

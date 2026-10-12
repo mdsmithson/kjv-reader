@@ -1155,56 +1155,12 @@ header {
   margin: 0 auto;
   padding: 20px 48px 0;
 }
-#highlight-options-toggle {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-}
-.highlight-drawer {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 220ms ease;
-}
-.highlight-drawer.is-open {
-  grid-template-rows: 1fr;
-}
-.highlight-drawer-inner {
-  overflow: hidden;
-  min-height: 0;
-}
 #reader-highlights-form {
   margin-top: 16px;
   padding: 20px;
   background: #eee8dc;
   border: 1px solid #d9cfbe;
   border-radius: 6px;
-}
-#reader-highlights-form h2 {
-  font-size: 18px;
-  margin: 0 0 16px;
-}
-.highlight-rule {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 100px;
-  gap: 24px;
-  align-items: start;
-  padding: 14px 0;
-  border-top: 1px solid #d9cfbe;
-}
-.highlight-rule .checkbox {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  white-space: normal;
-  font-size: 13px;
-  color: #514638;
-}
-.highlight-rule p {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: #776d5e;
-  line-height: 1.6;
 }
 .highlight-color input {
   width: 70px;
@@ -1246,17 +1202,8 @@ header {
     padding-left: 20px;
     padding-right: 20px;
   }
-  .highlight-rule {
-    grid-template-columns: minmax(0, 1fr) 70px;
-    gap: 12px;
-  }
   #reader-highlights-form {
     padding: 14px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .highlight-drawer {
-    transition: none;
   }
 }
 
@@ -1275,12 +1222,6 @@ header {
   .verse-table-heading button {
     font-size: 10px;
   }
-}
-
-.highlight-rule .checkbox input {
-  width: auto;
-  flex-shrink: 0;
-  margin: 0;
 }
 
 .number-table-heading,
@@ -1407,4 +1348,137 @@ header {
   text-decoration: underline;
   padding: 2px 6px;
   font-size: 11px;
+}
+
+.reader-highlight-options {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.reader-highlight-options span,
+.highlight-page-actions span {
+  font-size: 12px;
+  color: #766750;
+}
+.highlight-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 26px 0;
+}
+.highlight-page-actions button {
+  padding: 10px 16px;
+}
+.highlight-filter {
+  border: 1px solid #d9cfbe;
+  border-radius: 8px;
+  padding: 18px;
+  margin: 14px 0;
+  background: #fcfaf5;
+}
+.highlight-filter-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.highlight-filter-heading button {
+  margin-left: auto;
+  padding: 6px 10px;
+}
+.highlight-filter-heading .checkbox {
+  flex-direction: row;
+  align-items: center;
+}
+.highlight-filter-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 210px) 64px;
+  gap: 16px;
+  align-items: end;
+}
+.highlight-filter-controls .highlight-frequency[hidden] {
+  display: none;
+}
+.highlight-filter-controls label {
+  min-width: 0;
+}
+.highlight-filter-controls input[type="number"] {
+  padding: 10px;
+  width: 100%;
+}
+.highlight-filter-controls select {
+  width: 100%;
+}
+.highlight-filter-controls .highlight-color {
+  grid-column: 3;
+  justify-self: end;
+}
+.highlights-page #highlight-save-status {
+  line-height: 1.7;
+}
+@media (max-width: 900px) {
+  .highlight-filter-controls {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+  .highlight-filter-controls .highlight-frequency {
+    grid-column: 1;
+  }
+  .highlight-filter-controls .highlight-color {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+.reader-highlight-options button {
+  padding: 10px 14px;
+}
+.highlight-filter-controls .highlight-color input {
+  width: 64px;
+  max-width: 100%;
+}
+
+.phrase-match-options {
+  display: flex;
+  gap: 0.5rem;
+  border: 0;
+  padding: 0;
+  margin: 1rem 0;
+}
+.phrase-match-options legend {
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+  color: #766750;
+}
+.phrase-match-options label {
+  flex-direction: row;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid #d9cfbe;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+.phrase-match-options label:has(input:checked) {
+  background: #653a32;
+  color: white;
+}
+.phrase-books-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0 2rem;
+}
+.phrase-books-table th,
+.phrase-books-table td {
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid #d9cfbe;
+  text-align: left;
+}
+.phrase-books-table th:last-child,
+.phrase-books-table td:last-child {
+  text-align: right;
+}
+.phrase-books-table tfoot {
+  font-weight: 700;
 }

@@ -2,6 +2,8 @@
 use super::*;
 mod verses;
 mod search;
+mod book_counts;
+pub use book_counts::BookOccurrence;
 mod visibility;
 use crate::{bible::Bible, phrase_stats::PhraseDetail};
 use catalogue::{PhraseFilters, SavedPhrase, SavedPhrasePage};
@@ -114,6 +116,7 @@ pub struct PreparedPhrases {
     children: Vec<u32>,
     visible: visibility::VisibleCatalogue,
     search_spans: Vec<u32>,
+    book_counts: book_counts::BookCounts,
     search_cache: Mutex<Vec<(String, Arc<Vec<u32>>)>>,
     contents_cache: Mutex<HashMap<String, PhraseContents>>,
 }
@@ -137,6 +140,7 @@ impl PreparedPhrases {
         let tokens = u32_file(&root.join("tokens.bin"))?;
         let ids = u32_file(&root.join("groups.bin"))?;
         let visible = visibility::read(root, &manifest)?;
+        let book_counts = book_counts::BookCounts::read(root, &manifest, &visible)?;
         let search_spans = search::read_spans(root, &manifest, &tokens)?;
         let children = u32_file(&root.join("phrase-children.bin"))?;
         let child_header: ChildrenHeader = read_json(&root.join("phrase-children.json"))?;
@@ -170,6 +174,7 @@ impl PreparedPhrases {
             children,
             visible,
             search_spans,
+            book_counts,
             search_cache: Mutex::new(Vec::new()),
             contents_cache: Mutex::new(HashMap::new()),
         })
@@ -564,6 +569,7 @@ impl OccurrenceIndex {
             .and_then(|_| prepare_children(destination))
             .and_then(|_| visibility::prepare(destination))
             .and_then(|_| search::prepare(destination))
+            .and_then(|_| book_counts::prepare(self, destination))
             .map_err(|e| format!("Unable to prepare phrase data: {e}"))
     }
     fn prepare(&self, destination: &Path, maximum_words: u16) -> io::Result<()> {

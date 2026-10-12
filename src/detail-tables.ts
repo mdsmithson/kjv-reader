@@ -63,17 +63,23 @@ export const contextWordTable = (
   owner: string,
   entries: readonly ContextWord[],
   sort: DetailSort,
+  numberLinks = false,
 ) =>
   `<section class="context-words"><h2>${title}</h2><p class="counting-note">Each word appears once. Counts cover the whole Bible. Click a header to sort; click it again to reverse.</p><div class="context-word-table"><div class="context-word-heading">${sortHeader(owner, "word", "Word", sort)}${sortHeader(owner, "occurrences", "Occurrences", sort)}${sortHeader(owner, "letters", "Letters", sort)}${sortHeader(owner, "books", "Books", sort)}</div>${sorted(
     entries,
     sort,
   )
-    .map(
-      (entry) =>
-        `<button class="context-word-row" data-word="${escape(entry.word)}"><span class="scripture">${escape(entry.display)}</span><span>${entry.occurrences.toLocaleString()}</span><span>${entry.letters}</span><span>${entry.books}</span></button>`,
+    .map((entry) =>
+      numberLinks
+        ? `<div class="context-word-row"><button class="verse-word scripture" data-word="${escape(entry.word)}">${escape(entry.display)}</button>${[entry.occurrences, entry.letters, entry.books].map(numberCell).join("")}</div>`
+        : `<button class="context-word-row" data-word="${escape(entry.word)}"><span class="scripture">${escape(entry.display)}</span><span>${entry.occurrences.toLocaleString()}</span><span>${entry.letters}</span><span>${entry.books}</span></button>`,
     )
     .join("")}</div></section>`;
 export const contextPhraseHeader = (owner: string, sort: DetailSort) =>
   `<div class="verse-phrase-heading">${sortHeader(owner, "phrase", "Phrase", sort)}${sortHeader(owner, "occurrences", "Occurrences", sort)}${sortHeader(owner, "books", "Books", sort)}</div>`;
-export const contextPhraseRow = (entry: SavedPhrase) =>
-  `<button class="verse-phrase-row" data-saved-phrase="${escape(entry.phrase)}" data-phrase-label="${escape(entry.display ?? entry.phrase)}"><span class="scripture">${escape(entry.display ?? entry.phrase)}</span><span>${entry.occurrences.toLocaleString()}</span><span>${entry.books}</span></button>`;
+const numberCell = (number: number) =>
+  `<span><button class="number-stat-link" data-number="${number}">${number.toLocaleString()}</button></span>`;
+export const contextPhraseRow = (entry: SavedPhrase, numberLinks = false) =>
+  numberLinks
+    ? `<div class="verse-phrase-row"><button class="verse-word scripture" data-saved-phrase="${escape(entry.phrase)}" data-phrase-label="${escape(entry.display ?? entry.phrase)}">${escape(entry.display ?? entry.phrase)}</button>${numberCell(entry.occurrences)}${numberCell(entry.books)}</div>`
+    : `<button class="verse-phrase-row" data-saved-phrase="${escape(entry.phrase)}" data-phrase-label="${escape(entry.display ?? entry.phrase)}"><span class="scripture">${escape(entry.display ?? entry.phrase)}</span><span>${entry.occurrences.toLocaleString()}</span><span>${entry.books}</span></button>`;

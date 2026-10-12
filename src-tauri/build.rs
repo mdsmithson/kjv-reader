@@ -132,6 +132,13 @@ fn verify_prepared() {
             rollup["retained"].as_u64().unwrap() * 4
         );
     }
+    let phrase_books: serde_json::Value = serde_json::from_slice(&fs::read(root.join("phrase-books.json")).expect("Prepare phrase book counts before packaging")).unwrap();
+    assert_eq!(phrase_books["format"].as_u64(), Some(1));
+    assert_eq!(phrase_books["fingerprint"], manifest["fingerprint"]);
+    assert_eq!(phrase_books["total"], manifest["total"]);
+    assert_eq!(phrase_books["retained"], rollup["retained"]);
+    assert_eq!(fs::metadata(root.join("phrase-books-directory.bin")).unwrap().len(), phrase_books["retained"].as_u64().unwrap() * 12);
+    assert_eq!(fs::metadata(root.join("phrase-books.bin")).unwrap().len(), phrase_books["links"].as_u64().unwrap() * 8);
     let frequencies: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("verse-phrase-frequency.json")).unwrap())
             .unwrap();
@@ -145,6 +152,27 @@ fn verify_prepared() {
         frequencies["frequencies"].as_array().unwrap().len() as u64
             * frequencies["total"].as_u64().unwrap()
             * 8
+    );
+    let reader: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("reader-mentions.json"))
+            .expect("Prepare reader highlight metadata before packaging"),
+    )
+    .unwrap();
+    assert_eq!(reader["format"].as_u64(), Some(2));
+    assert_eq!(reader["fingerprint"], manifest["fingerprint"]);
+    assert_eq!(reader["total"], verses["word_links"]);
+    assert_eq!(reader["phrases"], verses["display_links"]);
+    assert_eq!(
+        fs::metadata(root.join("reader-mentions.bin"))
+            .unwrap()
+            .len(),
+        verses["word_links"].as_u64().unwrap()
+    );
+    assert_eq!(
+        fs::metadata(root.join("reader-phrase-counts.bin"))
+            .unwrap()
+            .len(),
+        verses["display_links"].as_u64().unwrap() * 4
     );
     let analysis = root
         .join("occurrences")
